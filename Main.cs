@@ -486,6 +486,7 @@ internal static class EnemyCtrlPatches
                         _hoverSam = null;
                         if (unitSin != null)
                         {
+                            try { drag.DeSelectSin(); } catch { }
                             try { drag.SelectSin(unitSin, slotSam); } catch { }
                             _duelIntent[drag.Pointer] = (slotSam, ++_actionSeq);
                             TryFormDuel(drag, slotSam);
