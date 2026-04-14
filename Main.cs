@@ -10,8 +10,11 @@ using Il2CppInterop.Runtime;
 using UI.Utility;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using BepInEx.Logging;
 
 using Il2CppList = Il2CppSystem.Collections.Generic.List<SinActionModel>;
+using Unity.Mathematics;
+using System.Linq;
 
 namespace EnemyCtrl;
 
@@ -25,11 +28,78 @@ internal static class PluginInfo
 [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
 public class EnemyCtrlPlugin : BasePlugin
 {
+    public static EnemyCtrlPlugin Instance;
+    public static ManualLogSource Logger;
+
+    static Dictionary<long, List<int>> _skillBagList = new();
+    public static Dictionary<long, SkillBagState> _skillBagStates = new();
+
     public override void Load()
     {
+        Instance = this;
+        Logger = Log;
         new Harmony(PluginInfo.PLUGIN_GUID).PatchAll(typeof(EnemyCtrlPatches));
     }
+
+    private static void AddNewBag(BattleUnitModel unit)
+    {
+        long ptr = unit.Pointer.ToInt64();
+
+        SkillStaticDataList skillList = Singleton<StaticDataManager>.Instance._skillList;
+
+        List<int> aNewBag = new();
+        
+        if (unit.UnitDataModel?._unitKeywordList != null)
+        {
+            foreach (UnitAttribute unitAttribute in unit.UnitDataModel._unitAttributeList)
+            {
+                aNewBag.AddRange(Enumerable.Repeat(unitAttribute.skillId, unitAttribute.number));
+            }
+        }
+
+        aNewBag = aNewBag.OrderBy(item => System.Random.Shared.Next()).ToList();
+        if (!_skillBagStates.ContainsKey(ptr)) _skillBagStates[ptr] = new SkillBagState();
+
+        _skillBagStates[ptr].SkillBag.AddRange(aNewBag);
+    }
+
+    public static void RecheckSkillBag(BattleUnitModel unit, SinActionModel sam)
+    {
+        long ptr = unit.Pointer.ToInt64();
+
+        if (!_skillBagStates.ContainsKey(ptr)) _skillBagStates[ptr] = new SkillBagState();
+
+        SkillBagState state = _skillBagStates[ptr];
+
+        if (state.SkillIdUsedLastTurn.HasValue)
+        {
+            state.OnDashboardSkills.Remove(state.SkillIdUsedLastTurn.Value);
+        }
+
+        while (state.OnDashboardSkills.Count < 7)
+        {
+            if (state.SkillBag.Count == 0) AddNewBag(unit);
+
+            int nextSkill = state.SkillBag[0];
+
+            state.SkillBag.RemoveAt(0);
+            state.OnDashboardSkills.Add(nextSkill);
+        }
+
+        if (sam.currentSinList == null) sam.currentSinList = new();
+        sam.currentSinList.Clear();
+
+        foreach(int skillId in state.OnDashboardSkills) sam.currentSinList.Add(new UnitSinModel(skillId, unit, sam));
+    }
+
+    public class SkillBagState
+    {
+        public List<int> SkillBag = new();
+        public List<int> OnDashboardSkills = new();
+        public int? SkillIdUsedLastTurn = null;
+    }
 }
+
 
 [HarmonyPatch]
 internal static class EnemyCtrlPatches
@@ -44,6 +114,11 @@ internal static class EnemyCtrlPatches
     static readonly HashSet<int> _triggeredSlots = new();
     static int _actionSeq = 0;
     static readonly Dictionary<IntPtr, (SinActionModel playerSam, int seq)> _duelIntent = new();
+
+
+    static readonly Dictionary<IntPtr, SinActionModel> _portraitSam = new();
+    static readonly Dictionary<IntPtr, int> _defenseSkillSwapPreserve = new();
+
 
     [HarmonyPatch(typeof(BattleUIRoot), nameof(BattleUIRoot.OnRoundStart))]
     [HarmonyPrefix]
@@ -67,6 +142,9 @@ internal static class EnemyCtrlPatches
         _drag     = null;
         _dragSin  = null;
         _hoverSam = null;
+
+        _portraitSam.Clear();
+        _defenseSkillSwapPreserve.Clear();
     }
 
     [HarmonyPatch(typeof(StageModel), nameof(StageModel.Init))]
@@ -81,6 +159,9 @@ internal static class EnemyCtrlPatches
         _dragSin       = null;
         _hoverSam      = null;
         _triggeredSlots.Clear();
+
+        _portraitSam.Clear();
+        _defenseSkillSwapPreserve.Clear();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -107,6 +188,17 @@ internal static class EnemyCtrlPatches
             {
                 var sam = enemies[i];
                 if (sam?.UnitModel == null || sam.UnitModel.IsDead()) continue;
+
+                // if (sam.currentSinList != null && sam.currentSinList.Count > 0)
+                // {
+                //     UnitSinModel gameSin = sam.currentSinList[0];
+                //     SkillModel gameSkill = gameSin.GetSkill() ?? gameSin.GetNewSkill();
+
+                //     EnemyCtrlPlugin.Logger.LogMessage($"Rolled Skill {gameSkill.GetID()}");
+                // }
+
+                EnemyCtrlPlugin.RecheckSkillBag(sam.UnitModel, sam);
+
                 sinActionList.Add(sam);
                 _injectedEnemies.Add(sam.Pointer);
             }
@@ -172,7 +264,10 @@ internal static class EnemyCtrlPatches
             __instance._firstSinSlot?.Init(__instance);
             __instance._secondSinSlot?.Init(__instance);
 
-            var sinList = sinAction.currentSinList;
+            Il2CppSystem.Collections.Generic.List<UnitSinModel> sinList = sinAction.currentSinList;
+
+            if (__instance._portraitSlot != null) _portraitSam[__instance._portraitSlot.Pointer] = sinAction;
+
             if (sinList != null && sinList.Count > 0)
             {
                 SetEnemySinSlot(__instance._firstSinSlot,  sinList.Count > 0 ? sinList[0] : null);
@@ -247,6 +342,10 @@ internal static class EnemyCtrlPatches
         if (targetSinAction.Pointer == __instance.Pointer) return;
         if (IsEnemy(targetSinAction)) return;
         _targets[__instance.Pointer] = (targetSinAction, sin);
+
+        long ptr = __instance.UnitModel.Pointer.ToInt64();
+
+        if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state)) state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
     }
 
     [HarmonyPatch(typeof(NewOperationSinActionSlot),
@@ -513,6 +612,62 @@ internal static class EnemyCtrlPatches
         if (_drag != null && Input.GetMouseButtonDown(1))
             CancelDrag();
     }
+
+    [HarmonyPatch(typeof(NewOperationPortraitSlot), nameof(NewOperationPortraitSlot.OnPointerDown))]
+    [HarmonyPrefix]
+    static bool Portrait_PointerDown(NewOperationPortraitSlot __instance, PointerEventData eventData)
+    {
+        if (eventData.button != PointerEventData.InputButton.Left) return true;
+
+        try
+        {
+            if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
+            if (!IsEnemy(sam)) return true;
+
+            bool alreadyIsDefense = false;
+
+            BattleUnitModel unit = sam.UnitModel;
+            Il2CppSystem.Collections.Generic.List<UnitSinModel> currentSinList = sam.currentSinList;
+
+            if (unit == null || currentSinList == null) return false;
+
+            UnitSinModel bottomSin = currentSinList[0];
+            if (bottomSin.GetSkill().IsDefense()) alreadyIsDefense = true;
+
+            Il2CppSystem.Collections.Generic.List<int> defSkillIdList = unit.GetDefenseSkillIDList();
+
+            if (defSkillIdList == null || defSkillIdList.Count == 0) return false;
+
+            int defaultDefSkillId = defSkillIdList[0];
+
+            if (alreadyIsDefense)
+            {
+                if (_defenseSkillSwapPreserve.TryGetValue(sam.Pointer, out int preservedSkillId)) currentSinList[0] = new UnitSinModel(preservedSkillId, unit, sam);
+            }
+            else
+            {
+                _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
+                currentSinList[0] = new UnitSinModel(defaultDefSkillId, unit, sam);
+            }
+
+            SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController?.UpdateAllSlotForNormal();
+        }
+        catch (Exception ex)
+        {
+            EnemyCtrlPlugin.Logger.LogError($"Failed to toggle defense skill: {ex}");
+        }
+
+        return false; // Block original portrait click behavior
+    }
+
+    // !!! DOESNT DETECT WHEN CLICKED ON AN ENEMY PORTRAIT !!!
+    // [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.EquipDefense))]
+	// [HarmonyPrefix]
+    // static bool Postfix_NewOperationController_EquipDefense(bool equiped, SinActionModel sinAction)
+    // {
+    //     EnemyCtrlPlugin.Logger.LogMessage("Equip Defense Ran for EnemyCtrl");
+    //     return true;
+    // }
 
     [HarmonyPatch(typeof(NewOperationSinSlot), nameof(NewOperationSinSlot.OnPointerDown))]
     [HarmonyPrefix]

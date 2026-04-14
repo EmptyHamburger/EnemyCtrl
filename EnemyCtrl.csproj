@@ -8,10 +8,33 @@
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <PlatformTarget>x64</PlatformTarget>
     <Nullable>enable</Nullable>
+    <RestoreAdditionalProjectSources>
+			https://api.nuget.org/v3/index.json;
+			https://nuget.bepinex.dev/v3/index.json;
+			https://nuget.samboy.dev/v3/index.json
+		</RestoreAdditionalProjectSources>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.649" />
-    <Reference Include="Assembly-CSharp">
+    <!-- <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.649" /> -->
+    <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.*" IncludeAssets="compile" />
+		<PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+    <Reference Include="$(LimbusCompanyFolder)\BepInEx\core\*.dll">
+			<HintPath>%(Identity)</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="$(LimbusCompanyFolder)\BepInEx\interop\*.dll" Exclude="$(LimbusCompanyFolder)\BepInEx\interop\Newtonsoft.Json.dll">
+			<HintPath>%(Identity)</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="$(LimbusCompanyFolder)\BepInEx\plugins\Lethe.dll">
+			<HintPath>%(Identity)</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="$(LimbusCompanyFolder)\BepInEx\plugins\ModularSkillScripts.dll">
+			<HintPath>%(Identity)</HintPath>
+			<Private>false</Private>
+		</Reference>
+    <!-- <Reference Include="Assembly-CSharp">
       <HintPath>..\..\lethe\BepInEx\interop\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
@@ -50,6 +73,6 @@
     <Reference Include="FMODUnity">
       <HintPath>..\..\lethe\BepInEx\interop\FMODUnity.dll</HintPath>
       <Private>false</Private>
-    </Reference>
+    </Reference> -->
   </ItemGroup>
 </Project>
