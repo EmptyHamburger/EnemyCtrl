@@ -622,17 +622,15 @@ internal static class EnemyCtrlPatches
         try
         {
             if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
-            if (!IsEnemy(sam)) return true;
-
-            bool alreadyIsDefense = false;
+            if (!IsEnemy(sam)) return true;            
 
             BattleUnitModel unit = sam.UnitModel;
             Il2CppSystem.Collections.Generic.List<UnitSinModel> currentSinList = sam.currentSinList;
 
-            if (unit == null || currentSinList == null) return false;
+            if (unit == null || currentSinList == null || currentSinList.Count == 0) return false;
 
             UnitSinModel bottomSin = currentSinList[0];
-            if (bottomSin.GetSkill().IsDefense()) alreadyIsDefense = true;
+            bool alreadyIsDefense = bottomSin.GetSkill()?.IsDefense() ?? false;
 
             Il2CppSystem.Collections.Generic.List<int> defSkillIdList = unit.GetDefenseSkillIDList();
 
@@ -650,14 +648,33 @@ internal static class EnemyCtrlPatches
                 currentSinList[0] = new UnitSinModel(defaultDefSkillId, unit, sam);
             }
 
-            SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController?.UpdateAllSlotForNormal();
+            var controller = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
+
+            if (controller != null)
+            {
+                NewOperationSinActionSlot newOperationSinActionSlot = null;
+
+                foreach(NewOperationSinActionSlot slot in controller._sinActionSlotList)
+                {
+                    if (slot?.SinAction?.Pointer == sam.Pointer && slot.SinAction != null)
+                    {
+                        newOperationSinActionSlot = slot;
+                        break;
+                    }
+                }
+
+                if (newOperationSinActionSlot != null) SetEnemySinSlot(newOperationSinActionSlot._firstSinSlot, currentSinList[0]);
+                controller.UpdateAllSlotForNormal();
+            }
+
+            
         }
         catch (Exception ex)
         {
             EnemyCtrlPlugin.Logger.LogError($"Failed to toggle defense skill: {ex}");
         }
 
-        return false; // Block original portrait click behavior
+        return false;
     }
 
     // !!! DOESNT DETECT WHEN CLICKED ON AN ENEMY PORTRAIT !!!
