@@ -119,6 +119,8 @@ internal static class EnemyCtrlPatches
     static readonly Dictionary<IntPtr, SinActionModel> _portraitSam = new();
     static readonly Dictionary<IntPtr, int> _defenseSkillSwapPreserve = new();
 
+    static SinActionModel? _pendingDuelEnemy  = null;
+    static SinActionModel? _pendingDuelSinner = null;
 
     [HarmonyPatch(typeof(BattleUIRoot), nameof(BattleUIRoot.OnRoundStart))]
     [HarmonyPrefix]
@@ -139,9 +141,11 @@ internal static class EnemyCtrlPatches
         _duelIntent.Clear();
         _actionSeq = 0;
         if (_drag != null) CancelDrag();
-        _drag     = null;
-        _dragSin  = null;
-        _hoverSam = null;
+        _drag             = null;
+        _dragSin          = null;
+        _hoverSam         = null;
+        _pendingDuelEnemy  = null;
+        _pendingDuelSinner = null;
 
         _portraitSam.Clear();
         _defenseSkillSwapPreserve.Clear();
@@ -153,11 +157,14 @@ internal static class EnemyCtrlPatches
     {
         _injectedEnemies.Clear();
         _targets.Clear();
+        _pinned.Clear();
         _duelIntent.Clear();
-        _actionSeq = 0;
-        _drag          = null;
-        _dragSin       = null;
-        _hoverSam      = null;
+        _actionSeq        = 0;
+        _drag             = null;
+        _dragSin          = null;
+        _hoverSam         = null;
+        _pendingDuelEnemy  = null;
+        _pendingDuelSinner = null;
         _triggeredSlots.Clear();
 
         _portraitSam.Clear();
@@ -247,8 +254,97 @@ internal static class EnemyCtrlPatches
     static bool EnemySlot_BlockVanillaPointer(NewOperationSinActionSlot __instance, ref bool __result)
     {
         if (!IsEnemy(__instance._sinAction)) return true;
-        __result = false;
-        return false;
+        if (_drag != null) { __result = false; return false; }
+        return true;
+    }
+
+
+    [HarmonyPatch(typeof(NewOperationSinSlot), nameof(NewOperationSinSlot.PointerEnterForNormal))]
+    [HarmonyPostfix]
+    static void EnemySlot_EnterPending(NewOperationSinSlot __instance)
+    {
+        if (!_cmdOpen || _drag != null) return;
+        var enemySam = __instance._sinActionSlot?._sinAction;
+        if (!IsEnemy(enemySam)) return;
+        try
+        {
+            var ctrl = SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController;
+            if (ctrl == null || !ctrl.IsDrawing) return;
+
+            int lastIdx = ctrl.GetLastSelectedSlotIndex();
+            if (lastIdx < 0) return;
+            var slots = ctrl._sinActionSlotList;
+            if (lastIdx >= slots.Count) return;
+            var sinnerSam = slots[lastIdx].SinAction;
+            if (sinnerSam == null || IsEnemy(sinnerSam)) return;
+
+            _pendingDuelEnemy  = enemySam;
+            _pendingDuelSinner = sinnerSam;
+        }
+        catch { }
+    }
+
+
+    [HarmonyPatch(typeof(NewOperationSinSlot), nameof(NewOperationSinSlot.PointerExitForNormal))]
+    [HarmonyPostfix]
+    static void EnemySlot_ExitPending(NewOperationSinSlot __instance)
+    {
+        var sam = __instance._sinActionSlot?._sinAction;
+        if (!IsEnemy(sam)) return;
+        if (_pendingDuelEnemy?.Pointer == sam?.Pointer)
+        {
+            _pendingDuelEnemy  = null;
+            _pendingDuelSinner = null;
+        }
+    }
+
+
+    [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.CheckCompleteForNormal))]
+    [HarmonyPrefix]
+    static void CheckComplete_CommitDuel(NewOperationController __instance)
+    {
+        if (!_cmdOpen || _pendingDuelEnemy == null || _pendingDuelSinner == null) return;
+        try
+        {
+            if (!__instance.IsDrawing) return;
+            var enemySam  = _pendingDuelEnemy;
+            var sinnerSam = _pendingDuelSinner;
+            _pendingDuelEnemy  = null;
+            _pendingDuelSinner = null;
+
+            _duelIntent[enemySam.Pointer] = (sinnerSam, ++_actionSeq);
+
+            var unitSin = enemySam.currentSinList?.Count > 0 ? enemySam.currentSinList[0] : null;
+            if (unitSin != null)
+                try { enemySam.SelectSin(unitSin, sinnerSam); } catch { }
+
+            try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
+        }
+        catch { }
+    }
+
+
+    [HarmonyPatch(typeof(SinActionModel), nameof(SinActionModel.DeSelectSin))]
+    [HarmonyPostfix]
+    static void SinnerDeSelected(SinActionModel __instance)
+    {
+        if (!_cmdOpen || __instance == null || IsEnemy(__instance)) return;
+        try
+        {
+            bool removed = false;
+            foreach (var key in new List<IntPtr>(_duelIntent.Keys))
+            {
+                if (_duelIntent.TryGetValue(key, out var intent) &&
+                    intent.playerSam?.Pointer == __instance.Pointer)
+                {
+                    _duelIntent.Remove(key);
+                    removed = true;
+                }
+            }
+            if (removed)
+                try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
+        }
+        catch { }
     }
 
     [HarmonyPatch(typeof(NewOperationSinActionSlot), nameof(NewOperationSinActionSlot.SetData))]
@@ -322,8 +418,9 @@ internal static class EnemyCtrlPatches
 
             try
             {
-                var ctrl = SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController;
-                ctrl?.UpdateAllSlotForNormal();
+                var root = SingletonBehavior<BattleUIRoot>.Instance;
+                root?.NewOperationController?.UpdateAllSlotForNormal();
+                root?.ShowAllCharacterTargetArrows();
             }
             catch { }
         }
@@ -346,6 +443,9 @@ internal static class EnemyCtrlPatches
         long ptr = __instance.UnitModel.Pointer.ToInt64();
 
         if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state)) state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+
+        try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); }
+        catch { }
     }
 
     [HarmonyPatch(typeof(NewOperationSinActionSlot),
@@ -394,17 +494,40 @@ internal static class EnemyCtrlPatches
         if (__instance?.GetFaction() == UNIT_FACTION.PLAYER) __result = true;
     }
 
-    [HarmonyPatch(typeof(SinActionModel), nameof(SinActionModel.OnTargetedAsMain))]
+    [HarmonyPatch(typeof(SinActionModel), nameof(SinActionModel.SelectSin),
+        new[] { typeof(UnitSinModel), typeof(SinActionModel) })]
     [HarmonyPostfix]
-    static void TrackSinnerTargetsEnemy(SinActionModel __instance, BattleActionModel otherAction)
+    static void SinnerTargetsEnemy_Gate(SinActionModel __instance,
+        UnitSinModel sin, SinActionModel targetSinAction)
     {
-        if (!_cmdOpen || otherAction == null) return;
-        if (!IsEnemy(__instance)) return;
+        if (!_cmdOpen) return;
+        if (__instance == null || targetSinAction == null) return;
+        if (IsEnemy(__instance)) return;
+        if (!IsEnemy(targetSinAction)) return;
         try
         {
-            var sinnerSam = otherAction.SinAction;
-            if (sinnerSam == null || IsEnemy(sinnerSam)) return;
-            _duelIntent[__instance.Pointer] = (sinnerSam, ++_actionSeq);
+            var enemyAction  = targetSinAction.CurrentBattleAction;
+            var playerAction = __instance.CurrentBattleAction;
+            if (enemyAction  != null) _pinned.Remove(enemyAction.Pointer);
+            if (playerAction != null) _pinned.Remove(playerAction.Pointer);
+            _targets.Remove(targetSinAction.Pointer);
+            _duelIntent.Remove(targetSinAction.Pointer);
+
+            bool redirected = false;
+            try
+            {
+                var mainTarget = enemyAction?.GetMainTarget();
+                redirected = mainTarget != null && __instance.UnitModel != null
+                          && mainTarget.Pointer == __instance.UnitModel.Pointer;
+            }
+            catch { }
+
+            if (redirected)
+            {
+                _duelIntent[targetSinAction.Pointer] = (__instance, ++_actionSeq);
+                TryFormDuel(targetSinAction, __instance);
+            }
+            try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
         }
         catch { }
     }
@@ -459,22 +582,23 @@ internal static class EnemyCtrlPatches
             var dueledPlayers = new HashSet<IntPtr>();
             var dueledEnemies = new HashSet<IntPtr>();
 
-            var sorted = new List<(SinActionModel sam, BattleActionModel action, SinActionModel targetSam, int seq)>();
+            var sorted = new List<(SinActionModel sam, BattleActionModel action, SinActionModel duelPartner, int seq)>();
             foreach (var (sam, enemyAction, targetSam) in applied)
             {
                 int seq = 0;
-                SinActionModel duelPartner = targetSam;
+                SinActionModel? duelPartner = null;
                 if (_duelIntent.TryGetValue(sam.Pointer, out var intent))
                 {
                     duelPartner = intent.playerSam;
                     seq = intent.seq;
                 }
-                sorted.Add((sam, enemyAction, duelPartner, seq));
+                sorted.Add((sam, enemyAction, duelPartner!, seq));
             }
             sorted.Sort((a, b) => b.seq.CompareTo(a.seq));
 
             foreach (var (sam, enemyAction, duelPartner, seq) in sorted)
             {
+                if (duelPartner == null) continue;
                 try
                 {
                     var playerAction = duelPartner.CurrentBattleAction;
@@ -482,11 +606,14 @@ internal static class EnemyCtrlPatches
                     if (dueledPlayers.Contains(playerAction.Pointer)) continue;
                     if (dueledEnemies.Contains(enemyAction.Pointer)) continue;
 
-                    if (!BattleActionModel.CanDuelBoth(enemyAction, playerAction)) continue;
+                    try { playerAction.ChangeMainTargetSinAction(sam, enemyAction, true); } catch { }
+                    try { enemyAction.ChangeMainTargetSinAction(duelPartner, playerAction, true); } catch { }
+                    _pinned[enemyAction.Pointer] = duelPartner;
 
                     actionMgr.RemoveDuel(enemyAction);
                     actionMgr.RemoveDuel(playerAction);
                     actionMgr.AddDuel(playerAction, enemyAction);
+                    _pinned[playerAction.Pointer] = sam;
                     dueledPlayers.Add(playerAction.Pointer);
                     dueledEnemies.Add(enemyAction.Pointer);
                 }
@@ -741,8 +868,7 @@ internal static class EnemyCtrlPatches
             if (playerTargetUnit == null || enemyUnit == null) return;
             if (playerTargetUnit.Pointer != enemyUnit.Pointer) return;
 
-            if (!BattleActionModel.CanDuelBoth(enemyAction, playerAction)) return;
-
+           
             actionMgr.RemoveDuel(enemyAction);
             actionMgr.RemoveDuel(playerAction);
             actionMgr.AddDuel(playerAction, enemyAction);
