@@ -30,11 +30,15 @@ internal static class PluginInfo
 [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
 public class EnemyCtrlPlugin : BasePlugin
 {
+    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> {ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET};
     public static EnemyCtrlPlugin Instance;
     public static ManualLogSource Logger;
 
     static Dictionary<long, List<int>> _skillBagList = new();
     public static Dictionary<long, SkillBagState> _skillBagStates = new();
+
+    public static Dictionary<ATTRIBUTE_TYPE, int> _egoStockDict = attribute_types.ToDictionary(key => key, _ => 0);
+    public static Dictionary<IntPtr, Dictionary<ATTRIBUTE_TYPE, int>> _reservedEgoStock = new();
 
     public override void Load()
     {
@@ -43,6 +47,32 @@ public class EnemyCtrlPlugin : BasePlugin
         new Harmony(PluginInfo.PLUGIN_GUID).PatchAll(typeof(EnemyCtrlPatches));
 
         ClassInjector.RegisterTypeInIl2Cpp<EgoSelectionUI>();
+    }
+
+    public static void ResetEgoStock()
+    {
+        _egoStockDict = attribute_types.ToDictionary(key => key, _ => 0);
+    }
+
+    public static void SyncEgoStockToGame()
+    {
+        Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].ResetToZero();
+        foreach (var pair in _egoStockDict)
+        {
+            Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(pair.Key, pair.Value, null, 0);
+        }
+    }
+
+    public static void RefundEgoResource(SinActionModel sam)
+    {
+        if (_reservedEgoStock.TryGetValue(sam.Pointer, out var sinDict))
+        {
+            foreach (ATTRIBUTE_TYPE sin in attribute_types)
+            _egoStockDict[sin] += sinDict[sin];
+
+            _reservedEgoStock.Remove(sam.Pointer);
+            SyncEgoStockToGame();
+        }
     }
 
     private static void AddNewBag(BattleUnitModel unit)
@@ -80,6 +110,7 @@ public class EnemyCtrlPlugin : BasePlugin
         if (state.SkillIdUsedLastTurn.HasValue)
         {
             state.OnDashboardSkills.Remove(state.SkillIdUsedLastTurn.Value);
+            state.SkillIdUsedLastTurn = null;
         }
 
         while (state.OnDashboardSkills.Count < 7)
@@ -209,12 +240,10 @@ public class EnemyCtrlPlugin : BasePlugin
 
         private bool CanUseEgo(BattleEgoModel bem, bool isCorrosion)
         {
-            var stockManager = Singleton<SinManager>.Instance._egoStockMangaer;
-
-            foreach(ATTRIBUTE_TYPE sin in Enum.GetValues<ATTRIBUTE_TYPE>())
-            {
-                if (bem.GetNeedResourceCount(sin, isCorrosion) > stockManager.GetAttributeStockNumberByAttributeType(UNIT_FACTION.ENEMY, sin)) return false;
-            }
+            // foreach(ATTRIBUTE_TYPE sin in attribute_types)
+            // {
+            //     if (bem.GetNeedResourceCount(sin, isCorrosion) > _egoStockDict[sin]) return false;
+            // }
             
             return true;
         }
@@ -230,10 +259,21 @@ public class EnemyCtrlPlugin : BasePlugin
             SkillModel currentBottomSkill = _currentSam.currentSinList[0].GetSkill();
 
             if (currentBottomSkill != null)
+
             if (!currentBottomSkill.IsDefense() && !currentBottomSkill.IsEgoSkill() && !currentBottomSkill.IsEgoOverclock())
             EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer] = currentBottomSkill.GetID();
 
+            RefundEgoResource(_currentSam);
+
             _currentSam.currentSinList[0] = newEgoSin;
+
+            Dictionary<ATTRIBUTE_TYPE, int> newCost = attribute_types.ToDictionary(sin => sin, sin => bem.GetNeedResourceCount(sin, isCorrosion));
+
+            foreach(ATTRIBUTE_TYPE sin in attribute_types) _egoStockDict[sin] -= newCost[sin];
+
+            _reservedEgoStock[_currentSam.Pointer] = newCost;
+
+            SyncEgoStockToGame();
 
             var controller = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
 
@@ -308,6 +348,8 @@ internal static class EnemyCtrlPatches
 
         _portraitSam.Clear();
         _defenseSkillSwapPreserve.Clear();
+
+        EnemyCtrlPlugin.SyncEgoStockToGame();
     }
 
     [HarmonyPatch(typeof(StageModel), nameof(StageModel.Init))]
@@ -329,6 +371,7 @@ internal static class EnemyCtrlPatches
         _portraitSam.Clear();
         _defenseSkillSwapPreserve.Clear();
         EnemyCtrlPlugin._skillBagStates.Clear();
+        EnemyCtrlPlugin.ResetEgoStock();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -622,7 +665,7 @@ internal static class EnemyCtrlPatches
 
         long ptr = __instance.UnitModel.Pointer.ToInt64();
 
-        if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state)) state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+        // state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
 
         try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); }
         catch { }
@@ -962,6 +1005,8 @@ internal static class EnemyCtrlPatches
 
                 if (defSkillIdList == null || defSkillIdList.Count == 0) return false;
 
+                EnemyCtrlPlugin.RefundEgoResource(sam);
+
                 int defaultDefSkillId = defSkillIdList[0];
 
                 if (alreadyIsDefense)
@@ -1055,7 +1100,27 @@ internal static class EnemyCtrlPatches
 
         // __instance.AddSinStock();
 
-        Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(__instance.GetSkillAttributeType(), 1, null, 0);
+        // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(__instance.GetSkillAttributeType(), 1, null, 0);
+        SkillModel skill = __instance.Skill;
+        long ptr = sam.UnitModel.Pointer.ToInt64();
+        if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state))
+        {
+            // state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+            
+            if (skill != null)
+            {
+                if (skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock())
+                {
+                    if (_defenseSkillSwapPreserve.TryGetValue(__instance.Pointer, out int preservedSkillId))
+                    state.SkillIdUsedLastTurn = preservedSkillId;
+                }
+
+                state.SkillIdUsedLastTurn = skill.GetID();
+            }
+        }
+
+        if (skill != null) if (!skill.IsDefense() && !skill.IsEgoSkill() && !skill.IsEgoOverclock())
+        EnemyCtrlPlugin._egoStockDict[__instance.GetSkillAttributeType()] ++;
     }
     // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock
 
