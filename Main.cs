@@ -11,7 +11,9 @@ using UI.Utility;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using BepInEx.Logging;
-
+using UnityEngine.UI;
+using TMPro;
+using Il2CppInterop.Runtime.Injection;
 using Il2CppList = Il2CppSystem.Collections.Generic.List<SinActionModel>;
 using Unity.Mathematics;
 using System.Linq;
@@ -39,6 +41,8 @@ public class EnemyCtrlPlugin : BasePlugin
         Instance = this;
         Logger = Log;
         new Harmony(PluginInfo.PLUGIN_GUID).PatchAll(typeof(EnemyCtrlPatches));
+
+        ClassInjector.RegisterTypeInIl2Cpp<EgoSelectionUI>();
     }
 
     private static void AddNewBag(BattleUnitModel unit)
@@ -56,6 +60,8 @@ public class EnemyCtrlPlugin : BasePlugin
                 aNewBag.AddRange(Enumerable.Repeat(unitAttribute.skillId, unitAttribute.number));
             }
         }
+
+        if (aNewBag.Count == 0) aNewBag.Add(1000104);
 
         aNewBag = aNewBag.OrderBy(item => System.Random.Shared.Next()).ToList();
         if (!_skillBagStates.ContainsKey(ptr)) _skillBagStates[ptr] = new SkillBagState();
@@ -98,6 +104,159 @@ public class EnemyCtrlPlugin : BasePlugin
         public List<int> OnDashboardSkills = new();
         public int? SkillIdUsedLastTurn = null;
     }
+
+    public class EgoSelectionUI : MonoBehaviour
+    {
+        public EgoSelectionUI(IntPtr ptr) : base(ptr) {}
+
+        public static EgoSelectionUI _instance;
+        public static EgoSelectionUI Instance
+        {
+            get
+            {
+                if (_instance == null)
+                {
+                    var newUI = new GameObject("EnemyCtrlCustomEgoPanel");
+                    UnityEngine.Object.DontDestroyOnLoad(newUI);
+                    _instance = newUI.AddComponent<EgoSelectionUI>();
+                }
+
+                return _instance;
+            }
+        }
+
+        private bool _showPanel = false;
+
+        private const int WIDTH = 600;
+        private const int HEIGHT = 250;
+        private Rect _panelRect = new Rect(Screen.width / 2 - WIDTH / 2, Screen.height / 2 - HEIGHT / 2, WIDTH, HEIGHT);
+        private SinActionModel _currentSam;
+
+        private Dictionary<BattleEgoModel, bool> _egoModelPair = new();
+
+        public void OpenPanel(SinActionModel sam)
+        {
+            if (sam == null) return;
+
+            _currentSam = sam;
+            _egoModelPair.Clear();
+
+            Il2CppSystem.Collections.Generic.List<BattleEgoModel> egoList = sam.UnitModel.GetEgoModelList();
+
+            if (egoList != null)
+            {
+                foreach(BattleEgoModel egoModel in egoList)
+                {
+                    _egoModelPair.Add(egoModel, false);
+                }
+            }
+
+            _showPanel = true;
+        }
+
+        void Update()
+        {
+            if (!_showPanel) return;
+
+
+            if (Input.GetKeyDown(KeyCode.Escape)) 
+            {
+                _showPanel = false;
+                return;
+            }
+
+            if (Input.GetMouseButtonDown(0))
+            if (!_panelRect.Contains(new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y)))
+            _showPanel = false;
+        }
+
+        public void DrawUI(int id)
+        {
+            GUILayout.BeginVertical();
+            GUILayout.Space(25);
+
+            foreach(var ego in _egoModelPair)
+            {
+                string name = ego.Key.AwakeningSkillModel.skillData.skillName;
+                GUILayout.BeginHorizontal();
+
+                GUI.enabled = CanUseEgo(ego.Key, ego.Value);
+                if (GUILayout.Button(ego.Value ? $"<color=#FF0000>[CORROSION]</color> {name}" : name, GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
+                GUI.enabled = true;
+
+                if (GUILayout.Button(ego.Value ? "To Awakening" : "<color=#FF0000>To Corrosion</color>", GUILayout.Width(100), GUILayout.Height(40)))
+                _egoModelPair[ego.Key] = !ego.Value;
+
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndVertical();
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 20));
+        }
+
+        void OnGUI()
+        {
+            if (!_showPanel) return;
+
+            _panelRect = GUI.Window(
+                31037,
+                _panelRect,
+                (GUI.WindowFunction) DrawUI,
+                "The E.G.O Files are CRAZY!"
+            );
+        }
+
+        private bool CanUseEgo(BattleEgoModel bem, bool isCorrosion)
+        {
+            var stockManager = Singleton<SinManager>.Instance._egoStockMangaer;
+
+            foreach(ATTRIBUTE_TYPE sin in Enum.GetValues<ATTRIBUTE_TYPE>())
+            {
+                if (bem.GetNeedResourceCount(sin, isCorrosion) > stockManager.GetAttributeStockNumberByAttributeType(UNIT_FACTION.ENEMY, sin)) return false;
+            }
+            
+            return true;
+        }
+
+        private void SelectEgo(BattleEgoModel bem, bool isCorrosion)
+        {
+            // UnitSinModel newEgoSin = new UnitSinModel(_currentSam.UnitModel, id, _currentSam, true);
+            UnitSinModel newEgoSin = new UnitSinModel(bem, _currentSam.UnitModel, _currentSam, isCorrosion, true);
+
+            // if (EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer])
+            // _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
+
+            SkillModel currentBottomSkill = _currentSam.currentSinList[0].GetSkill();
+
+            if (currentBottomSkill != null)
+            if (!currentBottomSkill.IsDefense() && !currentBottomSkill.IsEgoSkill() && !currentBottomSkill.IsEgoOverclock())
+            EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer] = currentBottomSkill.GetID();
+
+            _currentSam.currentSinList[0] = newEgoSin;
+
+            var controller = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
+
+            if (controller != null)
+            {
+                NewOperationSinActionSlot newOperationSinActionSlot = null;
+
+                foreach(NewOperationSinActionSlot slot in controller._sinActionSlotList)
+                {
+                    if (slot?.SinAction?.Pointer == _currentSam.Pointer && slot.SinAction != null)
+                    {
+                        newOperationSinActionSlot = slot;
+                        break;
+                    }
+                }
+
+                if (newOperationSinActionSlot != null) EnemyCtrlPatches.SetEnemySinSlot(newOperationSinActionSlot._firstSinSlot, _currentSam.currentSinList[0]);
+                controller.UpdateAllSlotForNormal();
+            }
+
+            _showPanel = false;
+        }
+    }
 }
 
 
@@ -117,7 +276,7 @@ internal static class EnemyCtrlPatches
 
 
     static readonly Dictionary<IntPtr, SinActionModel> _portraitSam = new();
-    static readonly Dictionary<IntPtr, int> _defenseSkillSwapPreserve = new();
+    public static readonly Dictionary<IntPtr, int> _defenseSkillSwapPreserve = new();
 
     static SinActionModel? _pendingDuelEnemy  = null;
     static SinActionModel? _pendingDuelSinner = null;
@@ -169,6 +328,7 @@ internal static class EnemyCtrlPatches
 
         _portraitSam.Clear();
         _defenseSkillSwapPreserve.Clear();
+        EnemyCtrlPlugin._skillBagStates.Clear();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -382,7 +542,7 @@ internal static class EnemyCtrlPatches
         return false;
     }
 
-    static void SetEnemySinSlot(NewOperationSinSlot? slot, UnitSinModel? sin)
+    public static void SetEnemySinSlot(NewOperationSinSlot? slot, UnitSinModel? sin)
     {
         if (slot == null) return;
         if (sin?.GetSkill() != null)
@@ -397,6 +557,16 @@ internal static class EnemyCtrlPatches
             slot.SetActiveSlot(false);
         }
     }
+
+    [HarmonyPatch(typeof(SinActionModel), nameof(SinActionModel.SelectSin),
+        new[] { typeof(UnitSinModel) })]
+    [HarmonyPrefix]
+    static bool CancelAISkill(SinActionModel __instance, UnitSinModel sin)
+    {
+        if (IsEnemy(__instance)) return false;
+        return true;
+    }
+
 
     [HarmonyPatch(typeof(SinActionModel), nameof(SinActionModel.SelectSin),
         new[] { typeof(UnitSinModel) })]
@@ -744,74 +914,92 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static bool Portrait_PointerDown(NewOperationPortraitSlot __instance, PointerEventData eventData)
     {
-        if (eventData.button != PointerEventData.InputButton.Left) return true;
+        if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
+        if (!IsEnemy(sam)) return true;
 
-        try
+        if (ModularSkillScripts.Patches.UniquePatches.RunSpecialAction(sam)) return false;
+
+        if (eventData.button == PointerEventData.InputButton.Left)
         {
-            if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
-            if (!IsEnemy(sam)) return true;            
-
-            BattleUnitModel unit = sam.UnitModel;
-            Il2CppSystem.Collections.Generic.List<UnitSinModel> currentSinList = sam.currentSinList;
-
-            if (unit == null || currentSinList == null || currentSinList.Count == 0) return false;
-
-            UnitSinModel bottomSin = currentSinList[0];
-            bool alreadyIsDefense = bottomSin.GetSkill()?.IsDefense() ?? false;
-
-            Il2CppSystem.Collections.Generic.List<int> defSkillIdList = unit.GetDefenseSkillIDList();
-
-            if (defSkillIdList == null || defSkillIdList.Count == 0) return false;
-
-            int defaultDefSkillId = defSkillIdList[0];
-
-            if (alreadyIsDefense)
+            try
             {
-                if (_defenseSkillSwapPreserve.TryGetValue(sam.Pointer, out int preservedSkillId)) currentSinList[0] = new UnitSinModel(preservedSkillId, unit, sam);
-            }
-            else
-            {
-                _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
-                currentSinList[0] = new UnitSinModel(defaultDefSkillId, unit, sam);
-            }
+                // if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
+                // if (!IsEnemy(sam)) return true;  
 
-            var controller = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
+                BattleUnitModel unit = sam.UnitModel;
+                Il2CppSystem.Collections.Generic.List<UnitSinModel> currentSinList = sam.currentSinList;
 
-            if (controller != null)
-            {
-                NewOperationSinActionSlot newOperationSinActionSlot = null;
+                if (unit == null || currentSinList == null || currentSinList.Count == 0) return false;
 
-                foreach(NewOperationSinActionSlot slot in controller._sinActionSlotList)
+                UnitSinModel bottomSin = currentSinList[0];
+                bool alreadyIsDefense = bottomSin.GetSkill().IsDefense();
+                bool isEgo = bottomSin.GetSkill().IsEgoSkill();
+                bool isEgoOverclock = bottomSin.GetSkill().IsEgoOverclock();
+
+                Il2CppSystem.Collections.Generic.List<int> defSkillIdList = unit.GetDefenseSkillIDList();
+
+                if (defSkillIdList == null || defSkillIdList.Count == 0) return false;
+
+                int defaultDefSkillId = defSkillIdList[0];
+
+                if (alreadyIsDefense)
                 {
-                    if (slot?.SinAction?.Pointer == sam.Pointer && slot.SinAction != null)
-                    {
-                        newOperationSinActionSlot = slot;
-                        break;
-                    }
+                    if (_defenseSkillSwapPreserve.TryGetValue(sam.Pointer, out int preservedSkillId)) currentSinList[0] = new UnitSinModel(preservedSkillId, unit, sam);
+                }
+                else
+                {
+                    if ((!isEgo && !isEgoOverclock) || !_defenseSkillSwapPreserve.ContainsKey(sam.Pointer))
+                    _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
+
+                    currentSinList[0] = new UnitSinModel(defaultDefSkillId, unit, sam);
                 }
 
-                if (newOperationSinActionSlot != null) SetEnemySinSlot(newOperationSinActionSlot._firstSinSlot, currentSinList[0]);
-                controller.UpdateAllSlotForNormal();
+                var controller = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
+
+                if (controller != null)
+                {
+                    NewOperationSinActionSlot newOperationSinActionSlot = null;
+
+                    foreach(NewOperationSinActionSlot slot in controller._sinActionSlotList)
+                    {
+                        if (slot?.SinAction?.Pointer == sam.Pointer && slot.SinAction != null)
+                        {
+                            newOperationSinActionSlot = slot;
+                            break;
+                        }
+                    }
+
+                    if (newOperationSinActionSlot != null) SetEnemySinSlot(newOperationSinActionSlot._firstSinSlot, currentSinList[0]);
+                    controller.UpdateAllSlotForNormal();
+                }
+
+                
             }
-
-            
+            catch (Exception ex)
+            {
+                EnemyCtrlPlugin.Logger.LogError($"Failed to toggle defense skill: {ex}");
+            }
+            return false;
         }
-        catch (Exception ex)
+
+        if (eventData.button == PointerEventData.InputButton.Right)
         {
-            EnemyCtrlPlugin.Logger.LogError($"Failed to toggle defense skill: {ex}");
+            try
+            {
+                // if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
+                // if (!IsEnemy(sam)) return true;
+                
+                EnemyCtrlPlugin.EgoSelectionUI.Instance.OpenPanel(sam);
+            }
+            catch (Exception ex)
+            {
+                EnemyCtrlPlugin.Logger.LogError($"Failed to open custom ego ui: {ex}");
+            }
+            return false;
         }
 
-        return false;
+        return true;
     }
-
-    // !!! DOESNT DETECT WHEN CLICKED ON AN ENEMY PORTRAIT !!!
-    // [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.EquipDefense))]
-	// [HarmonyPrefix]
-    // static bool Postfix_NewOperationController_EquipDefense(bool equiped, SinActionModel sinAction)
-    // {
-    //     EnemyCtrlPlugin.Logger.LogMessage("Equip Defense Ran for EnemyCtrl");
-    //     return true;
-    // }
 
     [HarmonyPatch(typeof(NewOperationSinSlot), nameof(NewOperationSinSlot.OnPointerDown))]
     [HarmonyPrefix]
@@ -834,6 +1022,17 @@ internal static class EnemyCtrlPatches
         catch { }
         return false;
     }
+
+    [HarmonyPatch(typeof(SkillModel), nameof(SkillModel.OnStartTurn_BeforeLog))]
+	[HarmonyPostfix]
+	static void Postfix_SkillModel_WhenUseTIMING(BattleActionModel action, List<BattleUnitModel> targets, BATTLE_EVENT_TIMING timing, SkillModel __instance)
+	{ 
+        var sam = action.SinAction;
+        if (sam == null) return;
+		if (!IsEnemy(sam)) return;
+
+        Singleton<SinManager>.Instance._egoStockMangaer.AddSinStock(UNIT_FACTION.ENEMY, __instance.GetAttributeType(), 1, 0);
+	}
 
     static void CancelDrag()
     {
