@@ -563,7 +563,17 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static bool CancelAISkill(SinActionModel __instance, UnitSinModel sin)
     {
-        if (IsEnemy(__instance)) return false;
+        if (IsEnemy(__instance))
+        {
+            try
+            {
+                var root = SingletonBehavior<BattleUIRoot>.Instance;
+                root?.NewOperationController?.UpdateAllSlotForNormal();
+                root?.ShowAllCharacterTargetArrows();
+            }
+            catch { }
+            return false;
+        }
         return true;
     }
 
@@ -1023,16 +1033,19 @@ internal static class EnemyCtrlPatches
         return false;
     }
 
-    [HarmonyPatch(typeof(SkillModel), nameof(SkillModel.OnStartTurn_BeforeLog))]
+    [HarmonyPatch(typeof(BattleActionModel), nameof(BattleActionModel.DoneWithAction))]
 	[HarmonyPostfix]
-	static void Postfix_SkillModel_WhenUseTIMING(BattleActionModel action, List<BattleUnitModel> targets, BATTLE_EVENT_TIMING timing, SkillModel __instance)
-	{ 
-        var sam = action.SinAction;
+	static void Postfix_BattleActionModel_DoneWithAction(BattleActionModel __instance)
+    {
+        var sam = __instance.SinAction;
         if (sam == null) return;
-		if (!IsEnemy(sam)) return;
+        if (!IsEnemy(sam)) return;
 
-        Singleton<SinManager>.Instance._egoStockMangaer.AddSinStock(UNIT_FACTION.ENEMY, __instance.GetAttributeType(), 1, 0);
-	}
+        // __instance.AddSinStock();
+
+        Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(__instance.GetSkillAttributeType(), 1, null, 0);
+    }
+    // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock
 
     static void CancelDrag()
     {
@@ -1066,7 +1079,6 @@ internal static class EnemyCtrlPatches
             var enemyUnit        = enemySam.UnitModel;
             if (playerTargetUnit == null || enemyUnit == null) return;
             if (playerTargetUnit.Pointer != enemyUnit.Pointer) return;
-
            
             actionMgr.RemoveDuel(enemyAction);
             actionMgr.RemoveDuel(playerAction);
