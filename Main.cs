@@ -688,9 +688,12 @@ internal static class EnemyCtrlPatches
         {
             var enemyAction  = targetSinAction.CurrentBattleAction;
             var playerAction = __instance.CurrentBattleAction;
+
+            bool isForcedTarget = _targets.TryGetValue(targetSinAction.Pointer, out var tgt)
+                               && tgt.target?.Pointer == __instance.Pointer;
+
             if (enemyAction  != null) _pinned.Remove(enemyAction.Pointer);
             if (playerAction != null) _pinned.Remove(playerAction.Pointer);
-            _targets.Remove(targetSinAction.Pointer);
             _duelIntent.Remove(targetSinAction.Pointer);
 
             bool redirected = false;
@@ -702,9 +705,11 @@ internal static class EnemyCtrlPatches
             }
             catch { }
 
-            if (redirected)
+            if (redirected || isForcedTarget)
             {
                 _duelIntent[targetSinAction.Pointer] = (__instance, ++_actionSeq);
+                if (isForcedTarget && enemyAction != null && !redirected)
+                    try { enemyAction.ChangeMainTargetSinAction(__instance, playerAction, true); } catch { }
                 TryFormDuel(targetSinAction, __instance);
             }
             try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
@@ -870,6 +875,7 @@ internal static class EnemyCtrlPatches
                         var slotSam = capturedSlot._sinAction;
                         if (slotSam == null || IsEnemy(slotSam)) return;
                         _hoverSam = slotSam;
+                        DrawDragArrow(_drag, slotSam);
                     })));
 
                 capturedSlot._trigger.AttachEntry((EventTriggerType)1,
@@ -877,6 +883,11 @@ internal static class EnemyCtrlPatches
                     {
                         var slotSam = capturedSlot._sinAction;
                         if (_hoverSam?.Pointer == slotSam?.Pointer) _hoverSam = null;
+                        if (_drag != null)
+                        {
+                            try { SingletonBehavior<BattleUIRoot>.Instance?.ClearAllArrows(); } catch { }
+                            
+                        }
                     })));
 
                 capturedSlot._trigger.AttachEntry((EventTriggerType)3,
@@ -890,6 +901,7 @@ internal static class EnemyCtrlPatches
                         _drag     = null;
                         _dragSin  = null;
                         _hoverSam = null;
+                        ClearCustomArrows();
                         if (unitSin != null)
                         {
                             try { drag.DeSelectSin(); } catch { }
@@ -1054,6 +1066,7 @@ internal static class EnemyCtrlPatches
         _drag    = null;
         _dragSin = null;
         _hoverSam = null;
+        ClearCustomArrows();
         try
         {
             var root = SingletonBehavior<BattleUIRoot>.Instance;
@@ -1083,6 +1096,98 @@ internal static class EnemyCtrlPatches
             actionMgr.RemoveDuel(enemyAction);
             actionMgr.RemoveDuel(playerAction);
             actionMgr.AddDuel(playerAction, enemyAction);
+        }
+        catch { }
+    }
+
+    static readonly List<TargetArrowUI> _customArrows = new();
+
+    static void ClearCustomArrows()
+    {
+        foreach (var a in _customArrows)
+        {
+            if (a == null) continue;
+            try { a.ClearArrow(); } catch { }
+            try { UnityEngine.Object.Destroy(((Component)a).gameObject); } catch { }
+        }
+        _customArrows.Clear();
+    }
+
+    static void SpawnArrow(SinActionModel sourceEnemy, SinActionModel targetPlayer)
+    {
+        try
+        {
+            if (sourceEnemy == null || targetPlayer == null) return;
+            var root = SingletonBehavior<BattleUIRoot>.Instance;
+            var ctrl = root?.ObjectUIController?._targetArrowController;
+            if (ctrl == null) return;
+
+            var objMgr = SingletonBehavior<BattleObjectManager>.Instance;
+            var srcView = objMgr?.GetView(sourceEnemy.UnitModel);
+            var tgtView = objMgr?.GetView(targetPlayer.UnitModel);
+            if (srcView == null || tgtView == null) return;
+
+            var t1 = srcView.UIManager?.GetActionSlotTransform(sourceEnemy);
+            var t2 = tgtView.UIManager?.GetActionSlotTransform(targetPlayer);
+            if (t1 == null) t1 = srcView.Transform_ArrowTarget;
+            if (t2 == null) t2 = tgtView.Transform_ArrowTarget;
+            if (t1 == null || t2 == null) return;
+
+            var prefab = ctrl._arrowPrefab;
+            var parent = ctrl._arrowParentTransform;
+            if (prefab == null || parent == null) return;
+
+            var arrowUI = UnityEngine.Object.Instantiate(prefab, parent);
+            arrowUI.Init();
+
+            var arrowPtr = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_new(
+                Il2CppInterop.Runtime.Il2CppClassPointerStore<BattleTargetArrow>.NativeClassPtr);
+            var arrow = new BattleTargetArrow(arrowPtr);
+            arrow.sinAction1   = sourceEnemy;
+            arrow.sinAction2   = targetPlayer;
+            arrow.transform1   = t1;
+            arrow.transform2   = t2;
+            arrow.isMain       = true;
+            arrow.isParrying   = false;
+            arrow.winRate      = 0f;
+            arrow.startFaction = UNIT_FACTION.ENEMY;
+            try { arrow.battleAction1 = sourceEnemy.CurrentBattleAction; } catch { }
+            try { arrow.battleAction2 = targetPlayer.CurrentBattleAction; } catch { }
+
+            arrowUI.InitOneWayArrow(arrow, 0.5f, 1f);
+            _customArrows.Add(arrowUI);
+        }
+        catch { }
+    }
+
+    static void DrawDragArrow(SinActionModel sourceEnemy, SinActionModel targetPlayer)
+    {
+        try { SingletonBehavior<BattleUIRoot>.Instance?.ObjectUIController?._targetArrowController?.ClearAllArrows(); } catch { }
+        ClearCustomArrows();
+        SpawnArrow(sourceEnemy, targetPlayer);
+    }
+
+    [HarmonyPatch(typeof(BattleUIRoot), nameof(BattleUIRoot.ShowAllCharacterTargetArrows))]
+    [HarmonyPostfix]
+    static void DrawPersistentEnemyArrows()
+    {
+        if (!_cmdOpen) return;
+        if (_drag != null) return;
+        if (_targets.Count == 0) return;
+        ClearCustomArrows();
+        try
+        {
+            var sinMgr = Singleton<SinManager>.Instance;
+            if (sinMgr == null) return;
+            var enemies = sinMgr.GetActionListByFaction(UNIT_FACTION.ENEMY);
+            if (enemies == null) return;
+            foreach (var e in enemies)
+            {
+                if (e == null) continue;
+                if (!_targets.TryGetValue(e.Pointer, out var entry)) continue;
+                if (entry.target == null) continue;
+                SpawnArrow(e, entry.target);
+            }
         }
         catch { }
     }
