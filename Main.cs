@@ -17,6 +17,7 @@ using Il2CppInterop.Runtime.Injection;
 using Il2CppList = Il2CppSystem.Collections.Generic.List<SinActionModel>;
 using Unity.Mathematics;
 using System.Linq;
+using BattleUI.UIRoot;
 
 namespace EnemyCtrl;
 
@@ -61,6 +62,8 @@ public class EnemyCtrlPlugin : BasePlugin
         {
             Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(pair.Key, pair.Value, null, 0);
         }
+
+        BattleUI.BattleUIRoot.Instance.UpdateEvilStockByCommand();
     }
 
     public static void RefundEgoResource(SinActionModel sam)
@@ -1090,39 +1093,106 @@ internal static class EnemyCtrlPatches
         return false;
     }
 
-    [HarmonyPatch(typeof(BattleActionModel), nameof(BattleActionModel.DoneWithAction))]
-	[HarmonyPostfix]
-	static void Postfix_BattleActionModel_DoneWithAction(BattleActionModel __instance)
+    // [HarmonyPatch(typeof(BattleActionModel), nameof(BattleActionModel.Done))]
+	// [HarmonyPostfix]
+
+    // static void Postfix_BattleActionModel_Done(BattleActionModel __instance)
+    // {
+    //     var sam = __instance.SinAction;
+    //     if (sam == null) return;
+    //     if (!IsEnemy(sam)) return;
+
+    //     // __instance.AddSinStock();
+
+    //     // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(__instance.GetSkillAttributeType(), 1, null, 0);
+    //     SkillModel skill = __instance.Skill;
+    //     // long ptr = sam.UnitModel.Pointer.ToInt64();
+    //     // if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state))
+    //     // {
+    //     //     // state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+            
+    //     //     if (skill != null)
+    //     //     {
+    //     //         if (skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock())
+    //     //         {
+    //     //             if (_defenseSkillSwapPreserve.TryGetValue(__instance.Pointer, out int preservedSkillId))
+    //     //             state.SkillIdUsedLastTurn = preservedSkillId;
+    //     //         }
+    //     //         else state.SkillIdUsedLastTurn = skill.GetID();
+    //     //     }
+    //     // }
+
+    //     if (skill != null) if (!skill.IsEgoSkill() && !skill.IsEgoOverclock())
+    //     EnemyCtrlPlugin._egoStockDict[__instance.GetSkillAttributeType()] ++;
+    //     EnemyCtrlPlugin.SyncEgoStockToGame();
+    // }
+
+    // [HarmonyPatch(typeof(BattleActionModel), nameof(BattleActionModel.DoneWithAction))]
+	// [HarmonyPostfix]
+	// static void Postfix_BattleActionModel_DoneWithAction(BattleActionModel __instance)
+    // {
+        // var sam = __instance.SinAction;
+        // if (sam == null) return;
+        // if (!IsEnemy(sam)) return;
+
+        // // __instance.AddSinStock();
+
+        // // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(__instance.GetSkillAttributeType(), 1, null, 0);
+        // SkillModel skill = __instance.Skill;
+        // long ptr = sam.UnitModel.Pointer.ToInt64();
+        // if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state))
+        // {
+        //     // state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+            
+        //     if (skill != null)
+        //     {
+        //         if (skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock())
+        //         {
+        //             if (_defenseSkillSwapPreserve.TryGetValue(__instance.Pointer, out int preservedSkillId))
+        //             state.SkillIdUsedLastTurn = preservedSkillId;
+        //         }
+        //         else state.SkillIdUsedLastTurn = skill.GetID();
+        //     }
+        // }
+
+        // if (skill != null) if (!skill.IsDefense() && !skill.IsEgoSkill() && !skill.IsEgoOverclock())
+        // EnemyCtrlPlugin._egoStockDict[__instance.GetSkillAttributeType()] ++;
+        // EnemyCtrlPlugin.SyncEgoStockToGame();
+    // }
+    // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock
+
+    [HarmonyPatch(typeof(SkillModel), nameof(SkillModel.OnStartTurn_BeforeLog))]
+    [HarmonyPostfix]
+    static void Postfix_SkillModel_WhenUse(BattleActionModel action, List<BattleUnitModel> targets, BATTLE_EVENT_TIMING timing, SkillModel __instance)
     {
-        var sam = __instance.SinAction;
+        var sam = action.SinAction;
         if (sam == null) return;
         if (!IsEnemy(sam)) return;
 
         // __instance.AddSinStock();
 
         // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock(__instance.GetSkillAttributeType(), 1, null, 0);
-        SkillModel skill = __instance.Skill;
-        long ptr = sam.UnitModel.Pointer.ToInt64();
-        if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state))
-        {
-            // state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+        SkillModel skill = __instance;
+        // long ptr = sam.UnitModel.Pointer.ToInt64();
+        // if (EnemyCtrlPlugin._skillBagStates.TryGetValue(ptr, out var state))
+        // {
+        //     // state.SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
             
-            if (skill != null)
-            {
-                if (skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock())
-                {
-                    if (_defenseSkillSwapPreserve.TryGetValue(__instance.Pointer, out int preservedSkillId))
-                    state.SkillIdUsedLastTurn = preservedSkillId;
-                }
+        //     if (skill != null)
+        //     {
+        //         if (skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock())
+        //         {
+        //             if (_defenseSkillSwapPreserve.TryGetValue(__instance.Pointer, out int preservedSkillId))
+        //             state.SkillIdUsedLastTurn = preservedSkillId;
+        //         }
+        //         else state.SkillIdUsedLastTurn = skill.GetID();
+        //     }
+        // }
 
-                state.SkillIdUsedLastTurn = skill.GetID();
-            }
-        }
-
-        if (skill != null) if (!skill.IsDefense() && !skill.IsEgoSkill() && !skill.IsEgoOverclock())
-        EnemyCtrlPlugin._egoStockDict[__instance.GetSkillAttributeType()] ++;
+        if (skill != null) if (!skill.IsEgoSkill() && !skill.IsEgoOverclock())
+        EnemyCtrlPlugin._egoStockDict[action.GetSkillAttributeType()] ++;
+        EnemyCtrlPlugin.SyncEgoStockToGame();
     }
-    // Singleton<SinManager>.Instance._egoStockMangaer._egoStockDic[UNIT_FACTION.ENEMY].AddSinStock
 
     static void CancelDrag()
     {
