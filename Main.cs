@@ -243,10 +243,10 @@ public class EnemyCtrlPlugin : BasePlugin
 
         private bool CanUseEgo(BattleEgoModel bem, bool isCorrosion)
         {
-            // foreach(ATTRIBUTE_TYPE sin in attribute_types)
-            // {
-            //     if (bem.GetNeedResourceCount(sin, isCorrosion) > _egoStockDict[sin]) return false;
-            // }
+            foreach(ATTRIBUTE_TYPE sin in attribute_types)
+            {
+                if (bem.GetNeedResourceCount(sin, isCorrosion) > _egoStockDict[sin]) return false;
+            }
             
             return true;
         }
