@@ -18,6 +18,12 @@ using Il2CppList = Il2CppSystem.Collections.Generic.List<SinActionModel>;
 using Unity.Mathematics;
 using System.Linq;
 using BattleUI.UIRoot;
+using System.Data;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+
 
 namespace EnemyCtrl;
 
@@ -31,14 +37,14 @@ internal static class PluginInfo
 [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
 public class EnemyCtrlPlugin : BasePlugin
 {
-    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> {ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET};
     public static EnemyCtrlPlugin Instance;
     public static ManualLogSource Logger;
 
-    public static Dictionary<long, SkillBagState> _skillBagStates = new();
-
+    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> {ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET};
+    public static Dictionary<IntPtr, SkillBagState> _skillBagStates = new();
     public static Dictionary<ATTRIBUTE_TYPE, int> _egoStockDict = attribute_types.ToDictionary(key => key, _ => 0);
     public static Dictionary<IntPtr, Dictionary<ATTRIBUTE_TYPE, int>> _reservedEgoStock = new();
+    public static Dictionary<ATTRIBUTE_TYPE, Texture2D> _sinTexture2d = new();
 
     public override void Load()
     {
@@ -47,6 +53,32 @@ public class EnemyCtrlPlugin : BasePlugin
         new Harmony(PluginInfo.PLUGIN_GUID).PatchAll(typeof(EnemyCtrlPatches));
 
         ClassInjector.RegisterTypeInIl2Cpp<EgoSelectionUI>();
+
+        LoadSinTextures();
+    }
+
+    private void LoadSinTextures()
+    {
+        string path_base = BepInEx.Paths.PluginPath;
+        string resourceFolderName = "EnvyPeccatulumPVP";
+        string path_resource = Path.Combine(path_base, resourceFolderName);
+
+        if (Directory.Exists(path_resource))
+        {
+            foreach(ATTRIBUTE_TYPE sinType in attribute_types)
+            {
+                string path_texture = Path.Combine(path_resource, sinType.ToString() + ".png");
+                if (File.Exists(path_texture))
+                {
+                    Texture2D newSinIcon = new Texture2D(40, 40);
+                    ImageConversion.LoadImage(newSinIcon, File.ReadAllBytes(path_texture));
+                    UnityEngine.Object.DontDestroyOnLoad(newSinIcon);
+
+                    _sinTexture2d[sinType] = newSinIcon;
+                }
+            }
+        }
+        else Logger.LogFatal("Resource folder 'EnvyPeccatulumPVP' not found!");
     }
 
     public static void ResetEgoStock()
@@ -77,12 +109,9 @@ public class EnemyCtrlPlugin : BasePlugin
         }
     }
 
-    private static void AddNewBag(BattleUnitModel unit)
+    private static void AddNewBag(BattleUnitModel unit, SinActionModel sam)
     {
-        long ptr = unit.Pointer.ToInt64();
-
         SkillStaticDataList skillList = Singleton<StaticDataManager>.Instance._skillList;
-
         List<int> aNewBag = new();
         
         if (unit.UnitDataModel?._unitKeywordList != null)
@@ -96,19 +125,18 @@ public class EnemyCtrlPlugin : BasePlugin
         if (aNewBag.Count == 0) aNewBag.Add(1000104);
 
         aNewBag = aNewBag.OrderBy(item => System.Random.Shared.Next()).ToList();
-        if (!_skillBagStates.ContainsKey(ptr)) _skillBagStates[ptr] = new SkillBagState();
+        if (!_skillBagStates.ContainsKey(unit.Pointer)) _skillBagStates[unit.Pointer] = new SkillBagState();
 
-        _skillBagStates[ptr].SkillBag.AddRange(aNewBag);
+        _skillBagStates[unit.Pointer].SkillBag.AddRange(aNewBag);
     }
 
     public static void RecheckSkillBag(BattleUnitModel unit, SinActionModel sam)
     {
         if (unit.GetState().IsPanic) return;
-        long ptr = unit.Pointer.ToInt64();
 
-        if (!_skillBagStates.ContainsKey(ptr)) _skillBagStates[ptr] = new SkillBagState();
+        if (!_skillBagStates.ContainsKey(unit.Pointer)) _skillBagStates[unit.Pointer] = new SkillBagState();
 
-        SkillBagState state = _skillBagStates[ptr];
+        SkillBagState state = _skillBagStates[unit.Pointer];
 
         if (state.SkillIdUsedLastTurn.HasValue)
         {
@@ -116,9 +144,9 @@ public class EnemyCtrlPlugin : BasePlugin
             state.SkillIdUsedLastTurn = null;
         }
 
-        while (state.OnDashboardSkills.Count < 7)
+        while (state.OnDashboardSkills.Count < 2)
         {
-            if (state.SkillBag.Count == 0) AddNewBag(unit);
+            if (state.SkillBag.Count == 0) AddNewBag(unit, sam);
 
             int nextSkill = state.SkillBag[0];
 
@@ -160,12 +188,10 @@ public class EnemyCtrlPlugin : BasePlugin
         }
 
         private bool _showPanel = false;
-
         private const int WIDTH = 600;
-        private const int HEIGHT = 250;
+        private const int HEIGHT = 500;
         private Rect _panelRect = new Rect(Screen.width / 2 - WIDTH / 2, Screen.height / 2 - HEIGHT / 2, WIDTH, HEIGHT);
         private SinActionModel _currentSam;
-
         private Dictionary<BattleEgoModel, bool> _egoModelPair = new();
 
         public void OpenPanel(SinActionModel sam)
@@ -211,8 +237,10 @@ public class EnemyCtrlPlugin : BasePlugin
 
             foreach(var ego in _egoModelPair)
             {
-                string name = ego.Key.AwakeningSkillModel.skillData.skillName;
+                GUILayout.BeginVertical();
                 GUILayout.BeginHorizontal();
+
+                string name = ego.Key.AwakeningSkillModel.skillData.skillName;
 
                 GUI.enabled = CanUseEgo(ego.Key, ego.Value);
                 if (GUILayout.Button(ego.Value ? $"<color=#FF0000>[CORROSION]</color> {name}" : name, GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
@@ -222,6 +250,24 @@ public class EnemyCtrlPlugin : BasePlugin
                 _egoModelPair[ego.Key] = !ego.Value;
 
                 GUILayout.EndHorizontal();
+                GUILayout.BeginHorizontal();
+                    
+                foreach(ATTRIBUTE_TYPE sin in attribute_types)
+                {
+                    int neededSinAmount = ego.Key.GetNeedResourceCount(sin, ego.Value);
+                    if (neededSinAmount > 0)
+                    {
+                        if (_sinTexture2d.TryGetValue(sin, out var sinicon))
+                        {
+                            GUILayout.Label(sinicon, GUILayout.Width(40), GUILayout.Height(40));
+                            GUILayout.Label($"x{neededSinAmount}");
+                        }
+                        else GUILayout.Label($"{sin.ToString()} x{neededSinAmount}");
+                    }
+                }
+
+                GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
             }
 
             GUILayout.EndVertical();
@@ -243,23 +289,19 @@ public class EnemyCtrlPlugin : BasePlugin
 
         private bool CanUseEgo(BattleEgoModel bem, bool isCorrosion)
         {
-            foreach(ATTRIBUTE_TYPE sin in attribute_types)
-            {
-                if (bem.GetNeedResourceCount(sin, isCorrosion) > _egoStockDict[sin]) return false;
-            }
+            // foreach(ATTRIBUTE_TYPE sin in attribute_types)
+            // {
+            //     if (bem.GetNeedResourceCount(sin, isCorrosion) > _egoStockDict[sin]) return false;
+            // }
             
             return true;
         }
 
         private void SelectEgo(BattleEgoModel bem, bool isCorrosion)
         {
-            // UnitSinModel newEgoSin = new UnitSinModel(_currentSam.UnitModel, id, _currentSam, true);
             UnitSinModel newEgoSin = new UnitSinModel(bem, _currentSam.UnitModel, _currentSam, isCorrosion, true);
-
-            // if (EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer])
-            // _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
-
             SkillModel currentBottomSkill = _currentSam.currentSinList[0].GetSkill();
+
 
             if (currentBottomSkill != null)
 
@@ -267,6 +309,7 @@ public class EnemyCtrlPlugin : BasePlugin
             EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer] = currentBottomSkill.GetID();
 
             RefundEgoResource(_currentSam);
+            
 
             _currentSam.currentSinList[0] = newEgoSin;
 
@@ -277,6 +320,7 @@ public class EnemyCtrlPlugin : BasePlugin
             _reservedEgoStock[_currentSam.Pointer] = newCost;
 
             SyncEgoStockToGame();
+
 
             var controller = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
 
@@ -1108,10 +1152,13 @@ internal static class EnemyCtrlPatches
             if (!skill.IsEgoSkill() && !skill.IsEgoOverclock())
             EnemyCtrlPlugin._egoStockDict[action.GetSkillAttributeType()] ++;
 
-            if (skill.IsDefense() || skill.IsEgoSkill() && skill.IsEgoOverclock())
-            if (_defenseSkillSwapPreserve.TryGetValue(action.SinAction.Pointer, out int skillId))
-            EnemyCtrlPlugin._skillBagStates[action.SinAction.UnitModel.Pointer.ToInt64()].SkillIdUsedLastTurn = skillId;
-            else EnemyCtrlPlugin._skillBagStates[action.SinAction.UnitModel.Pointer.ToInt64()].SkillIdUsedLastTurn = __instance.GetID();
+            if (!EnemyCtrlPlugin._skillBagStates.ContainsKey(sam.UnitModel.Pointer))
+            EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer] = new EnemyCtrlPlugin.SkillBagState();
+
+            if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.Pointer, out int skillId))){
+            EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer].SkillIdUsedLastTurn = skillId; return;}
+            else
+            EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer].SkillIdUsedLastTurn = __instance.GetID();
         }
         EnemyCtrlPlugin.SyncEgoStockToGame();
     }
