@@ -188,8 +188,8 @@ public class EnemyCtrlPlugin : BasePlugin
         }
 
         private bool _showPanel = false;
-        private const int WIDTH = 600;
-        private const int HEIGHT = 500;
+        private const int WIDTH = 800;
+        private const int HEIGHT = 700;
         private Rect _panelRect = new Rect(Screen.width / 2 - WIDTH / 2, Screen.height / 2 - HEIGHT / 2, WIDTH, HEIGHT);
         private SinActionModel _currentSam;
         private Dictionary<BattleEgoModel, bool> _egoModelPair = new();
@@ -238,6 +238,8 @@ public class EnemyCtrlPlugin : BasePlugin
             foreach(var ego in _egoModelPair)
             {
                 GUILayout.BeginVertical();
+
+
                 GUILayout.BeginHorizontal();
 
                 string name = ego.Key.AwakeningSkillModel.skillData.skillName;
@@ -250,7 +252,10 @@ public class EnemyCtrlPlugin : BasePlugin
                 _egoModelPair[ego.Key] = !ego.Value;
 
                 GUILayout.EndHorizontal();
+
+
                 GUILayout.BeginHorizontal();
+                GUILayout.Label("", GUILayout.ExpandWidth(true));
                     
                 foreach(ATTRIBUTE_TYPE sin in attribute_types)
                 {
@@ -262,11 +267,33 @@ public class EnemyCtrlPlugin : BasePlugin
                             GUILayout.Label(sinicon, GUILayout.Width(40), GUILayout.Height(40));
                             GUILayout.Label($"x{neededSinAmount}");
                         }
-                        else GUILayout.Label($"{sin.ToString()} x{neededSinAmount}");
+                        else GUILayout.Label($"{sin} x{neededSinAmount}");
                     }
                 }
-
+                GUILayout.Label("", GUILayout.ExpandWidth(true));
                 GUILayout.EndHorizontal();
+
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("", GUILayout.ExpandWidth(true));
+
+                Il2CppSystem.Collections.Generic.List<AttributeResistData> sinResList = Singleton<StaticDataManager>.Instance.EgoList.GetData(ego.Key.GetId()).attributeResistList;
+
+                foreach(AttributeResistData resistData in sinResList)
+                {
+                    if (resistData.Type == ATTRIBUTE_TYPE.WHITE || resistData.Type == ATTRIBUTE_TYPE.BLACK) continue;
+                    if (_sinTexture2d.TryGetValue(resistData.Type, out var sinicon))
+                    {
+                        GUILayout.Label(sinicon, GUILayout.Width(40), GUILayout.Height(40));
+                        GUILayout.Label($"x{resistData.value}");
+                    }
+                    else GUILayout.Label($"{resistData.Type} x{resistData.value}");
+                }
+
+                GUILayout.Label("", GUILayout.ExpandWidth(true));
+                GUILayout.EndHorizontal();
+
+
                 GUILayout.EndVertical();
             }
 
