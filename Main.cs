@@ -29,9 +29,10 @@ namespace EnemyCtrl;
 
 internal static class PluginInfo
 {
-    internal const string PLUGIN_GUID    = "com.samheult.enemyctrl";
+    internal const string PLUGIN_GUID    = $"{AUTHOR}.{PLUGIN_NAME}";
     internal const string PLUGIN_NAME    = "EnemyCtrl";
     internal const string PLUGIN_VERSION = "1.0.0";
+    internal const string AUTHOR = "pluh.MT";
 }
 
 [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
@@ -50,7 +51,7 @@ public class EnemyCtrlPlugin : BasePlugin
     {
         Instance = this;
         Logger = Log;
-        new Harmony(PluginInfo.PLUGIN_GUID).PatchAll(typeof(EnemyCtrlPatches));
+        new Harmony(PluginInfo.PLUGIN_NAME).PatchAll(typeof(EnemyCtrlPatches));
 
         ClassInjector.RegisterTypeInIl2Cpp<EgoSelectionUI>();
 
@@ -184,6 +185,18 @@ public class EnemyCtrlPlugin : BasePlugin
                 }
 
                 return _instance;
+            }
+        }
+
+        public bool IsMouseInside
+        {
+            get
+            {
+                if (!_showPanel) return false;
+
+                Vector2 guiMouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+
+                return _panelRect.Contains(guiMouse);
             }
         }
 
@@ -530,6 +543,7 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static bool EnemySlot_BlockVanillaPointer(NewOperationSinActionSlot __instance, ref bool __result)
     {
+        if (EnemyCtrlPlugin.EgoSelectionUI.Instance.IsMouseInside) return false;
         if (!IsEnemy(__instance._sinAction)) return true;
         if (_drag != null) { __result = false; return false; }
         return true;
@@ -914,7 +928,10 @@ internal static class EnemyCtrlPatches
 
                     actionMgr.RemoveDuel(enemyAction);
                     actionMgr.RemoveDuel(playerAction);
+
+                    if (BattleActionModel.CanDuelBoth(playerAction, enemyAction))
                     actionMgr.AddDuel(playerAction, enemyAction);
+                    
                     _pinned[playerAction.Pointer] = sam;
                     dueledPlayers.Add(playerAction.Pointer);
                     dueledEnemies.Add(enemyAction.Pointer);
@@ -1053,6 +1070,8 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static bool Portrait_PointerDown(NewOperationPortraitSlot __instance, PointerEventData eventData)
     {
+        if (EnemyCtrlPlugin.EgoSelectionUI.Instance.IsMouseInside) return false;
+
         if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
         if (!IsEnemy(sam)) return true;
 
@@ -1146,6 +1165,7 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static bool SinSlot_PointerDown_Pre(NewOperationSinSlot __instance, PointerEventData eventData)
     {
+        if (EnemyCtrlPlugin.EgoSelectionUI.Instance.IsMouseInside) return false;
         if (eventData?.button != PointerEventData.InputButton.Left) return true;
 
         var sam = __instance._sinActionSlot?._sinAction;
@@ -1182,7 +1202,7 @@ internal static class EnemyCtrlPatches
             if (!EnemyCtrlPlugin._skillBagStates.ContainsKey(sam.UnitModel.Pointer))
             EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer] = new EnemyCtrlPlugin.SkillBagState();
 
-            if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.Pointer, out int skillId))){
+            if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.UnitModel.Pointer, out int skillId))){
             EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer].SkillIdUsedLastTurn = skillId; return;}
             else
             EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer].SkillIdUsedLastTurn = __instance.GetID();
@@ -1209,6 +1229,17 @@ internal static class EnemyCtrlPatches
         catch { }
     }
 
+    static bool CanRedirectBySpeed(SinActionModel attacker, SinActionModel target)
+    {
+        try
+        {
+            return attacker.GetCurrentSpeed() > target.GetCurrentSpeed();
+        }
+        catch {}
+
+        return false;
+    }
+
     static void TryFormDuel(SinActionModel enemySam, SinActionModel playerSam)
     {
         try
@@ -1221,11 +1252,34 @@ internal static class EnemyCtrlPatches
 
             var playerTargetUnit = playerAction.GetMainTarget();
             var enemyUnit        = enemySam.UnitModel;
-            if (playerTargetUnit == null || enemyUnit == null) return;
-            if (playerTargetUnit.Pointer != enemyUnit.Pointer) return;
-           
+            if (enemyUnit == null) return;
+            // if (playerTargetUnit.Pointer != enemyUnit.Pointer) return;
+
+            bool playerAlreadyTargetsEnemy = playerTargetUnit != null && playerTargetUnit.Pointer == enemyUnit.Pointer;
+            bool canRedirect = playerAlreadyTargetsEnemy || CanRedirectBySpeed(enemySam, playerSam);
+
+            if (!canRedirect) return;
+
+            if (!playerAlreadyTargetsEnemy)
+            {
+                try
+                {
+                    playerAction.ChangeMainTargetSinAction(enemySam, enemyAction, true);
+                }
+                catch {}
+            }
+
+            try
+            {
+                enemyAction.ChangeMainTargetSinAction(playerSam, playerAction, true);
+            }
+            catch {}
+
+
             actionMgr.RemoveDuel(enemyAction);
             actionMgr.RemoveDuel(playerAction);
+
+            if (BattleActionModel.CanDuelBoth(playerAction, enemyAction))
             actionMgr.AddDuel(playerAction, enemyAction);
         }
         catch { }
