@@ -31,7 +31,7 @@ namespace EnemyCtrl;
 internal static class PluginInfo
 {
     internal const string PLUGIN_GUID    = $"{AUTHOR}.{PLUGIN_NAME}";
-    internal const string PLUGIN_NAME    = "EnemyCtrl";
+    internal const string PLUGIN_NAME    = "EnvyPeccatulumPVP";
     internal const string PLUGIN_VERSION = "1.0.0";
     internal const string AUTHOR = "pluh.MT";
 }
@@ -300,7 +300,7 @@ public class EnemyCtrlPlugin : BasePlugin
                 bool isStable = (_currentSam.UnitModel.Mp - skillModel.GetMpUsage()) <= -45 ? false : true;
 
                 GUI.enabled = CanUseEgo(ego.Key, ego.Value);
-                if (GUILayout.Button((ego.Value ? $"<color=#FF0000>[CORROSION]</color> {name}" : name) + (isStable ? "" : $"<color=#FF0000> [UNSTABLE]</color>"), GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
+                if (GUILayout.Button((ego.Value ? $"<color=#FF0000>[CORROSION]</color>" : "") + (isStable ? "" : $"<color=#FF0000> [UNSTABLE]</color>") + name, GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
                 GUI.enabled = true;
 
                 // if (ego.Key._corrosionSkillModel != null)
