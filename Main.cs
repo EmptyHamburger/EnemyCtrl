@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using BattleUI;
 using BattleUI.BattleUnit;
 using BattleUI.Operation;
@@ -56,7 +57,34 @@ public class EnemyCtrlPlugin : BasePlugin
         ClassInjector.RegisterTypeInIl2Cpp<EgoSelectionUI>();
 
         LoadSinTextures();
+
+        var appearanceGuard = new Harmony(PluginInfo.PLUGIN_NAME);
+        var appearanceFinalizer = new HarmonyMethod(typeof(EnemyCtrlPlugin).GetMethod(
+            nameof(AppearanceGuardFinalizer), BindingFlags.Static | BindingFlags.NonPublic));
+        var appearanceBaseType = typeof(SD.CharacterAppearance);
+        Type?[] appearanceTypes;
+        try { appearanceTypes = appearanceBaseType.Assembly.GetTypes(); }
+        catch (ReflectionTypeLoadException ex) { appearanceTypes = ex.Types; }
+        const BindingFlags appearanceFlags =
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        foreach (var appearanceType in appearanceTypes)
+        {
+            if (appearanceType == null || appearanceType == appearanceBaseType || !appearanceBaseType.IsAssignableFrom(appearanceType)) continue;
+            var marker = appearanceType.GetMethod("OnInitializeMaterial_Parts", appearanceFlags);
+            if (marker == null || marker.IsAbstract) continue;
+            foreach (var method in appearanceType.GetMethods(appearanceFlags))
+            {
+                if (method.IsAbstract || method.IsGenericMethodDefinition) continue;
+                if (method.ReturnType != typeof(void)) continue;
+                if (method.Name.StartsWith("get_") || method.Name.StartsWith("set_")) continue;
+                if (method.Name == ".ctor" || method.Name == ".cctor") continue;
+                try { appearanceGuard.Patch(method, finalizer: appearanceFinalizer); }
+                catch { }
+            }
+        }
     }
+
+    private static Exception? AppearanceGuardFinalizer(Exception? __exception) => null;
 
     private void LoadSinTextures()
     {
@@ -114,7 +142,7 @@ public class EnemyCtrlPlugin : BasePlugin
     {
         SkillStaticDataList skillList = Singleton<StaticDataManager>.Instance._skillList;
         List<int> aNewBag = new();
-        
+
         if (unit.UnitDataModel?._unitKeywordList != null)
         {
             foreach (UnitAttribute unitAttribute in unit.UnitDataModel._unitAttributeList)
@@ -232,15 +260,27 @@ public class EnemyCtrlPlugin : BasePlugin
             if (!_showPanel) return;
 
 
-            if (Input.GetKeyDown(KeyCode.Escape)) 
+            if (Input.GetKeyDown(KeyCode.Escape))
             {
                 _showPanel = false;
                 return;
             }
 
             if (Input.GetMouseButtonDown(0))
-            if (!_panelRect.Contains(new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y)))
-            _showPanel = false;
+                if (!_panelRect.Contains(new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y)))
+                    _showPanel = false;
+        }
+
+        public bool Stable(BattleEgoModel egoModel, bool IsCor)
+        {
+            SkillModel skillModel = IsCor ? egoModel.CorrosionSkillModel : egoModel.AwakeningSkillModel;
+
+            int mpUsage = skillModel.GetMpUsage();
+            int unitMp = _currentSam.UnitModel.Mp;
+
+            int finalMp = unitMp - mpUsage;
+            if (finalMp <= -45) return false;
+            return true;
         }
 
         public void DrawUI(int id)
@@ -256,11 +296,14 @@ public class EnemyCtrlPlugin : BasePlugin
                 GUILayout.BeginHorizontal();
 
                 string name = ego.Key.AwakeningSkillModel.skillData.skillName;
+                SkillModel skillModel = ego.Value ? ego.Key.CorrosionSkillModel : ego.Key.AwakeningSkillModel;
+                bool isStable = (_currentSam.UnitModel.Mp - skillModel.GetMpUsage()) <= -45 ? false : true;
 
                 GUI.enabled = CanUseEgo(ego.Key, ego.Value);
-                if (GUILayout.Button(ego.Value ? $"<color=#FF0000>[CORROSION]</color> {name}" : name, GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
+                if (GUILayout.Button((ego.Value ? $"<color=#FF0000>[CORROSION]</color> {name}" : name) + (isStable ? "" : $"<color=#FF0000> [UNSTABLE]</color>"), GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
                 GUI.enabled = true;
 
+                // if (ego.Key._corrosionSkillModel != null)
                 if (GUILayout.Button(ego.Value ? "To Awakening" : "<color=#FF0000>To Corrosion</color>", GUILayout.Width(100), GUILayout.Height(40)))
                 _egoModelPair[ego.Key] = !ego.Value;
 
@@ -269,7 +312,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("", GUILayout.ExpandWidth(true));
-                    
+
                 foreach(ATTRIBUTE_TYPE sin in attribute_types)
                 {
                     int neededSinAmount = ego.Key.GetNeedResourceCount(sin, ego.Value);
@@ -329,11 +372,11 @@ public class EnemyCtrlPlugin : BasePlugin
 
         private bool CanUseEgo(BattleEgoModel bem, bool isCorrosion)
         {
-            // foreach(ATTRIBUTE_TYPE sin in attribute_types)
-            // {
-            //     if (bem.GetNeedResourceCount(sin, isCorrosion) > _egoStockDict[sin]) return false;
-            // }
-            
+            foreach(ATTRIBUTE_TYPE sin in attribute_types)
+            {
+                if (bem.GetNeedResourceCount(sin, false) > _egoStockDict[sin]) return false;
+            }
+
             return true;
         }
 
@@ -349,7 +392,7 @@ public class EnemyCtrlPlugin : BasePlugin
             EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer] = currentBottomSkill.GetID();
 
             RefundEgoResource(_currentSam);
-            
+
 
             _currentSam.currentSinList[0] = newEgoSin;
 
@@ -931,7 +974,7 @@ internal static class EnemyCtrlPatches
 
                     if (BattleActionModel.CanDuelBoth(playerAction, enemyAction))
                     actionMgr.AddDuel(playerAction, enemyAction);
-                    
+
                     _pinned[playerAction.Pointer] = sam;
                     dueledPlayers.Add(playerAction.Pointer);
                     dueledEnemies.Add(enemyAction.Pointer);
@@ -1020,7 +1063,7 @@ internal static class EnemyCtrlPatches
                         if (_drag != null)
                         {
                             try { SingletonBehavior<BattleUIRoot>.Instance?.ClearAllArrows(); } catch { }
-                            
+
                         }
                     })));
 
@@ -1082,7 +1125,7 @@ internal static class EnemyCtrlPatches
             try
             {
                 // if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
-                // if (!IsEnemy(sam)) return true;  
+                // if (!IsEnemy(sam)) return true;
 
                 BattleUnitModel unit = sam.UnitModel;
                 Il2CppSystem.Collections.Generic.List<UnitSinModel> currentSinList = sam.currentSinList;
@@ -1133,7 +1176,7 @@ internal static class EnemyCtrlPatches
                     controller.UpdateAllSlotForNormal();
                 }
 
-                
+
             }
             catch (Exception ex)
             {
@@ -1148,7 +1191,7 @@ internal static class EnemyCtrlPatches
             {
                 // if (!_portraitSam.TryGetValue(__instance.Pointer, out var sam) || sam == null) return true;
                 // if (!IsEnemy(sam)) return true;
-                
+
                 EnemyCtrlPlugin.EgoSelectionUI.Instance.OpenPanel(sam);
             }
             catch (Exception ex)
