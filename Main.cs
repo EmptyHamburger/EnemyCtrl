@@ -32,7 +32,7 @@ internal static class PluginInfo
 {
     internal const string PLUGIN_GUID    = $"{AUTHOR}.{PLUGIN_NAME}";
     internal const string PLUGIN_NAME    = "EnvyPeccatulumPVP";
-    internal const string PLUGIN_VERSION = "1.0.0";
+    internal const string PLUGIN_VERSION = "0.8.5";
     internal const string AUTHOR = "pluh.MT";
 }
 
@@ -42,10 +42,14 @@ public class EnemyCtrlPlugin : BasePlugin
     public static EnemyCtrlPlugin Instance;
     public static ManualLogSource Logger;
 
-    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> {ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET};
-    public static Dictionary<IntPtr, SkillBagState> _skillBagStates = new();
+    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
+
+    public static Dictionary<IntPtr, List<SkillBagState>> _skillBagStates = new();
+    public static Dictionary<IntPtr, SkillBagState> _currentTurnSamSkillBag = new();
+
     public static Dictionary<ATTRIBUTE_TYPE, int> _egoStockDict = attribute_types.ToDictionary(key => key, _ => 0);
     public static Dictionary<IntPtr, Dictionary<ATTRIBUTE_TYPE, int>> _reservedEgoStock = new();
+
     public static Dictionary<ATTRIBUTE_TYPE, Texture2D> _sinTexture2d = new();
 
     public override void Load()
@@ -138,7 +142,7 @@ public class EnemyCtrlPlugin : BasePlugin
         }
     }
 
-    private static void AddNewBag(BattleUnitModel unit, SinActionModel sam)
+    private static void AddNewBag(BattleUnitModel unit, SkillBagState state)
     {
         SkillStaticDataList skillList = Singleton<StaticDataManager>.Instance._skillList;
         List<int> aNewBag = new();
@@ -153,19 +157,22 @@ public class EnemyCtrlPlugin : BasePlugin
 
         if (aNewBag.Count == 0) aNewBag.Add(1000104);
 
-        aNewBag = aNewBag.OrderBy(item => System.Random.Shared.Next()).ToList();
-        if (!_skillBagStates.ContainsKey(unit.Pointer)) _skillBagStates[unit.Pointer] = new SkillBagState();
-
-        _skillBagStates[unit.Pointer].SkillBag.AddRange(aNewBag);
+        aNewBag = aNewBag.OrderBy(item => Guid.NewGuid()).ToList();
+        state.SkillBag.AddRange(aNewBag);
     }
 
-    public static void RecheckSkillBag(BattleUnitModel unit, SinActionModel sam)
+    public static void RecheckSkillBag(BattleUnitModel unit, SinActionModel sam, int slotIdx)
     {
         if (unit.GetState().IsPanic) return;
 
-        if (!_skillBagStates.ContainsKey(unit.Pointer)) _skillBagStates[unit.Pointer] = new SkillBagState();
+        if (!_skillBagStates.ContainsKey(unit.Pointer)) _skillBagStates[unit.Pointer] = new List<SkillBagState>();
 
-        SkillBagState state = _skillBagStates[unit.Pointer];
+        while (_skillBagStates[unit.Pointer].Count <= slotIdx)
+            _skillBagStates[unit.Pointer].Add(new SkillBagState());
+
+        SkillBagState state = _skillBagStates[unit.Pointer][slotIdx];
+
+        _currentTurnSamSkillBag[sam.Pointer] = state;
 
         if (state.SkillIdUsedLastTurn.HasValue)
         {
@@ -175,7 +182,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
         while (state.OnDashboardSkills.Count < 2)
         {
-            if (state.SkillBag.Count == 0) AddNewBag(unit, sam);
+            if (state.SkillBag.Count == 0) AddNewBag(unit, state);
 
             int nextSkill = state.SkillBag[0];
 
@@ -480,6 +487,7 @@ internal static class EnemyCtrlPatches
         _defenseSkillSwapPreserve.Clear();
 
         EnemyCtrlPlugin.SyncEgoStockToGame();
+        EnemyCtrlPlugin._currentTurnSamSkillBag.Clear();
     }
 
     [HarmonyPatch(typeof(StageModel), nameof(StageModel.Init))]
@@ -500,8 +508,10 @@ internal static class EnemyCtrlPatches
 
         _portraitSam.Clear();
         _defenseSkillSwapPreserve.Clear();
-        EnemyCtrlPlugin._skillBagStates.Clear();
+
         EnemyCtrlPlugin.ResetEgoStock();
+        EnemyCtrlPlugin._skillBagStates.Clear();
+        EnemyCtrlPlugin._currentTurnSamSkillBag.Clear();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -524,24 +534,35 @@ internal static class EnemyCtrlPatches
             int needed = sinActionList.Count + enemies.Count;
             EnsureUiSlots(__instance, needed);
 
+            Dictionary<IntPtr, int> slotCounter = new();
+
             for (int i = 0; i < enemies.Count; i++)
             {
                 var sam = enemies[i];
                 if (sam?.UnitModel == null || sam.UnitModel.IsDead()) continue;
 
-                // if (sam.currentSinList != null && sam.currentSinList.Count > 0)
-                // {
-                //     UnitSinModel gameSin = sam.currentSinList[0];
-                //     SkillModel gameSkill = gameSin.GetSkill() ?? gameSin.GetNewSkill();
+                IntPtr unitPtr = sam.UnitModel.Pointer;
+                if (!slotCounter.ContainsKey(unitPtr)) slotCounter[unitPtr] = 0;
 
-                //     EnemyCtrlPlugin.Logger.LogMessage($"Rolled Skill {gameSkill.GetID()}");
-                // }
-
-                EnemyCtrlPlugin.RecheckSkillBag(sam.UnitModel, sam);
+                EnemyCtrlPlugin.RecheckSkillBag(sam.UnitModel, sam, slotCounter[unitPtr]);
+                slotCounter[unitPtr]++;
 
                 sinActionList.Add(sam);
                 _injectedEnemies.Add(sam.Pointer);
             }
+
+            // BAS_IndexFingerMissionAction indexFlower = new BAS_IndexFingerMissionAction();
+            // indexFlower.DuplicateType = BUFF_DUPLICATE_TYPE.CAN_DUPLICATE;
+            // indexFlower.UniqueKeyword = BATTLE_ACTION_SYSTEM_KEYWORD.BAS_IndexFingerMissionAction;
+            // SingletonBehavior<BattleUIRoot>.Instance.NewOperationController._sinActionSlotList[0].FirstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER, true, indexFlower);
+
+            // List<OPERATION_SKILL_EFFECT_TYPE> randomEffectList = new List<OPERATION_SKILL_EFFECT_TYPE> {OPERATION_SKILL_EFFECT_TYPE.BINAH_EGO, OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER, OPERATION_SKILL_EFFECT_TYPE.OVERCLOCK_STABLE, OPERATION_SKILL_EFFECT_TYPE.OVERCLOCK_UNSTABLE, OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST};
+            // System.Random rnd = new System.Random();
+            // foreach (NewOperationSinActionSlot nosas in SingletonBehavior<BattleUIRoot>.Instance.NewOperationController._sinActionSlotList)
+            // {
+            //     nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(randomEffectList[rnd.Next(randomEffectList.Count)], true, null);
+            //     nosas._secondSinSlot._effectManager.SetActiveEffect_OneType(randomEffectList[rnd.Next(randomEffectList.Count)], true, null);
+            // }
         }
         catch { }
     }
@@ -561,7 +582,7 @@ internal static class EnemyCtrlPatches
         for (int i = have; i < needed; i++)
         {
             var newPortrait = UnityEngine.Object.Instantiate(portraitTemplate, portraitParent);
-            var newSin      = UnityEngine.Object.Instantiate(sinTemplate, sinParent);
+            var newSin = UnityEngine.Object.Instantiate(sinTemplate, sinParent);
             portraits.Add(newPortrait);
             sinSlots.Add(newSin);
             newSin.Init(newPortrait);
@@ -903,6 +924,7 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static void ApplyTargets()
     {
+
         _cmdOpen = false;
         if (_targets.Count == 0) return;
 
@@ -973,7 +995,7 @@ internal static class EnemyCtrlPatches
                     actionMgr.RemoveDuel(playerAction);
 
                     if (BattleActionModel.CanDuelBoth(playerAction, enemyAction))
-                    actionMgr.AddDuel(playerAction, enemyAction);
+                        actionMgr.AddDuel(playerAction, enemyAction);
 
                     _pinned[playerAction.Pointer] = sam;
                     dueledPlayers.Add(playerAction.Pointer);
@@ -981,6 +1003,8 @@ internal static class EnemyCtrlPatches
                 }
                 catch { }
             }
+            try { SingletonBehavior<BattleUIRoot>.Instance?.ClearAllArrows(); } catch { }
+            ClearCustomArrows();
         }
         catch { }
     }
@@ -1075,8 +1099,8 @@ internal static class EnemyCtrlPatches
                         if (slotSam == null || IsEnemy(slotSam)) return;
                         var drag = _drag;
                         var unitSin = _dragSin ?? (drag.currentSinList?.Count > 0 ? drag.currentSinList[0] : null);
-                        _drag     = null;
-                        _dragSin  = null;
+                        _drag = null;
+                        _dragSin = null;
                         _hoverSam = null;
                         ClearCustomArrows();
                         if (unitSin != null)
@@ -1240,15 +1264,15 @@ internal static class EnemyCtrlPatches
         if (skill != null)
         {
             if (!skill.IsEgoSkill() && !skill.IsEgoOverclock())
-            EnemyCtrlPlugin._egoStockDict[action.GetSkillAttributeType()] ++;
+                EnemyCtrlPlugin._egoStockDict[action.GetSkillAttributeType()]++;
 
-            if (!EnemyCtrlPlugin._skillBagStates.ContainsKey(sam.UnitModel.Pointer))
-            EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer] = new EnemyCtrlPlugin.SkillBagState();
-
-            if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.UnitModel.Pointer, out int skillId))){
-            EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer].SkillIdUsedLastTurn = skillId; return;}
-            else
-            EnemyCtrlPlugin._skillBagStates[sam.UnitModel.Pointer].SkillIdUsedLastTurn = __instance.GetID();
+            if (EnemyCtrlPlugin._currentTurnSamSkillBag.TryGetValue(sam.Pointer, out var skillBagState))
+            {
+                if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.UnitModel.Pointer, out int skillId))){
+                skillBagState.SkillIdUsedLastTurn = skillId;}
+                else
+                skillBagState.SkillIdUsedLastTurn = __instance.GetID();
+            }
         }
         EnemyCtrlPlugin.SyncEgoStockToGame();
     }
@@ -1382,7 +1406,7 @@ internal static class EnemyCtrlPatches
             try { arrow.battleAction1 = sourceEnemy.CurrentBattleAction; } catch { }
             try { arrow.battleAction2 = targetPlayer.CurrentBattleAction; } catch { }
 
-            arrowUI.InitOneWayArrow(arrow, 0.5f, 1f);
+            arrowUI.InitOneWayArrow(arrow, 0.37f, 1f);
             _customArrows.Add(arrowUI);
         }
         catch { }
