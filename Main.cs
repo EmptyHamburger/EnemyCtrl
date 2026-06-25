@@ -24,6 +24,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Unity.Collections;
 
 namespace EnemyCtrl;
 
@@ -54,6 +55,10 @@ public class EnemyCtrlPlugin : BasePlugin
     public static Dictionary<int, List<(int, int)>> _skillUpgradeList = new();
     public static Dictionary<int, int> _specialSkillUpgradeCounter = new();
 
+    public static bool TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
+    public static bool TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
+    public static bool TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;
+
     public override void Load()
     {
         Instance = this;
@@ -64,7 +69,8 @@ public class EnemyCtrlPlugin : BasePlugin
 
         LoadSinTextures();
 
-        _skillUpgradeList.Add(2010011115, new List<(int, int)> { (1111501, 1111505), (1111502, 1111506), (1111503, 1111507) });
+        _skillUpgradeList[2010011115] = new List<(int, int)> { (1111501, 1111505), (1111502, 1111506), (1111503, 1111507) };
+        _skillUpgradeList[2010010916] = new List<(int, int)> { (-1, -1), (1091602, 1091606)};
 
         var appearanceGuard = new Harmony(PluginInfo.PLUGIN_NAME);
         var appearanceFinalizer = new HarmonyMethod(typeof(EnemyCtrlPlugin).GetMethod(
@@ -147,18 +153,46 @@ public class EnemyCtrlPlugin : BasePlugin
         }
     }
 
+    public static void ApplyEffect(SinActionModel unitSam, SinActionModel targetSam)
+    {
+        BattleUnitModel unit = unitSam.UnitModel;
+        BattleUnitModel target = targetSam.UnitModel;
+        NewOperationController ctrl = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
+        int unitId = unit.GetUnitID();
+        switch (unitId)
+        {
+            case 2010010716:
+                if (target.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.DuelEdgeAlly, false) != 5) return;
+                NewOperationSinActionSlot nosas = ctrl.GetSinActionSlot(unitSam);
+                if (nosas.FirstSinSlot.SinAction == unitSam) nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
+                else nosas._secondSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
+                return;
+            default: return;
+        }
+    }
+
+    public static void ClearAllEffect(SinActionModel sam)
+    {
+        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._firstSinSlot._effectManager._skillEffectList.Clear();
+        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._secondSinSlot._effectManager._skillEffectList.Clear();
+    }
+
+    public static void ResetCustomVariables()
+    {
+        TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
+        TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
+        TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;
+    }
+
     public static bool CheckConditionsUpgrade(BattleUnitModel unit)
     {
-        // Logger.LogFatal("CheckConditionsUpgrade");
         switch (unit.GetUnitID())
         {
             case 2010011115:
-                // Logger.LogFatal("Found 2010011115");
-                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0)
-                {
-                    // Logger.LogFatal("Conditons MET");
-                    return true;
-                }
+                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0) return true;
+                return false;
+            case 2010010916:
+                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.AccelBullet, false) == 0) return true;
                 return false;
             default: return false;
         }
@@ -179,6 +213,26 @@ public class EnemyCtrlPlugin : BasePlugin
                     state.OnDashboardSkills[0] = CheckConditionsUpgrade(unit) ? 1111507 : 1111503;
                     _specialSkillUpgradeCounter[unitId]++;
                     return;
+                case 2010010916:
+                    if (slotIdx != 0) return;
+                    if (state.OnDashboardSkills.Contains(1091607)) return;
+
+                    if (TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye)
+                    {
+                        state.OnDashboardSkills[1] = 1091607;
+                        TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
+                    }
+                    
+                    if (TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck)
+                    {
+                        TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
+                        state.OnDashboardSkills[1] = 1091607;
+
+                        TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = true;
+                    }
+                    else TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;
+
+                    return;
                 default: return;
             }
         }
@@ -196,6 +250,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
             int baseSkill = upgradeList[i].Item1;
             int upgradedSkill = upgradeList[i].Item2;
+            if (baseSkill == -1 || upgradedSkill == -1) break;
 
             UnitAttribute newSkillData = new UnitAttribute();
             newSkillData.number = i + 1;
@@ -592,6 +647,7 @@ internal static class EnemyCtrlPatches
         EnemyCtrlPlugin._skillBagStates.Clear();
         EnemyCtrlPlugin._currentTurnSamSkillBag.Clear();
         EnemyCtrlPlugin._specialSkillUpgradeCounter.Clear();
+        EnemyCtrlPlugin.ResetCustomVariables();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -630,19 +686,6 @@ internal static class EnemyCtrlPatches
                 sinActionList.Add(sam);
                 _injectedEnemies.Add(sam.Pointer);
             }
-
-            // BAS_IndexFingerMissionAction indexFlower = new BAS_IndexFingerMissionAction();
-            // indexFlower.DuplicateType = BUFF_DUPLICATE_TYPE.CAN_DUPLICATE;
-            // indexFlower.UniqueKeyword = BATTLE_ACTION_SYSTEM_KEYWORD.BAS_IndexFingerMissionAction;
-            // SingletonBehavior<BattleUIRoot>.Instance.NewOperationController._sinActionSlotList[0].FirstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER, true, indexFlower);
-
-            // List<OPERATION_SKILL_EFFECT_TYPE> randomEffectList = new List<OPERATION_SKILL_EFFECT_TYPE> {OPERATION_SKILL_EFFECT_TYPE.BINAH_EGO, OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER, OPERATION_SKILL_EFFECT_TYPE.OVERCLOCK_STABLE, OPERATION_SKILL_EFFECT_TYPE.OVERCLOCK_UNSTABLE, OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST};
-            // System.Random rnd = new System.Random();
-            // foreach (NewOperationSinActionSlot nosas in SingletonBehavior<BattleUIRoot>.Instance.NewOperationController._sinActionSlotList)
-            // {
-            //     nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(randomEffectList[rnd.Next(randomEffectList.Count)], true, null);
-            //     nosas._secondSinSlot._effectManager.SetActiveEffect_OneType(randomEffectList[rnd.Next(randomEffectList.Count)], true, null);
-            // }
         }
         catch { }
     }
@@ -778,6 +821,8 @@ internal static class EnemyCtrlPatches
             }
             if (removed)
                 try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
+            
+            EnemyCtrlPlugin.ClearAllEffect(__instance);
         }
         catch { }
     }
@@ -895,7 +940,7 @@ internal static class EnemyCtrlPatches
         if (IsEnemy(targetSinAction)) return;
         _targets[__instance.Pointer] = (targetSinAction, sin);
 
-        long ptr = __instance.UnitModel.Pointer.ToInt64();
+        // long ptr = __instance.UnitModel.Pointer.ToInt64();
 
         // EnemyCtrlPlugin._skillBagStates[__instance.UnitModel.Pointer.ToInt64()].SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
 
@@ -988,6 +1033,8 @@ internal static class EnemyCtrlPatches
                 TryFormDuel(targetSinAction, __instance);
             }
             try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
+
+            EnemyCtrlPlugin.ApplyEffect(__instance, targetSinAction);
         }
         catch { }
     }
@@ -1128,6 +1175,8 @@ internal static class EnemyCtrlPatches
     [HarmonyPostfix]
     static void AttachTargetTriggers(BattleUnitModel __instance)
     {
+
+        // EnemyCtrlPlugin.RoundStartCheckConditionUpgrade(__instance);
         if (!__instance.IsFaction(UNIT_FACTION.PLAYER)) return;
         try
         {
@@ -1544,5 +1593,27 @@ internal static class EnemyCtrlPatches
         try { return sin.GetSkill(); } catch { }
         try { return sin.GetNewSkill(); } catch { }
         return null;
+    }
+
+
+
+    [HarmonyPatch(typeof(BuffAbility_FutureEyeOnRodionLimitPerTurn), nameof(BuffAbility_FutureEyeOnRodionLimitPerTurn.RightAfterLosingBuff))]
+	[HarmonyPostfix]
+    public static void GetCheck(BattleUnitModel unit, int loseStack, int loseTurn, BATTLE_EVENT_TIMING timing, BuffInfo info, BuffAbility_FutureEyeOnRodionLimitPerTurn __instance)
+    {
+        if (unit.GetUnitID() == 2010010916) EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = true;
+    }
+
+    [HarmonyPatch(typeof(BattleUnitModel), nameof(BattleUnitModel.OnKillTarget))]
+	[HarmonyPostfix]
+	public static void Postfix_BattleUnitModel_OnKillTarget(BattleActionModel actionOrNull, BattleUnitModel target, DAMAGE_SOURCE_TYPE dmgSrcType, BATTLE_EVENT_TIMING timing, BattleUnitModel killer, BattleUnitModel __instance)
+	{
+        if (actionOrNull == null || actionOrNull.Skill == null) return;
+
+        if (__instance.GetUnitID() == 2010010916 &&
+        actionOrNull.GetSkillID() == 1091607 && 
+        target._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0 &&
+        !EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal)
+        EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = true;
     }
 }
