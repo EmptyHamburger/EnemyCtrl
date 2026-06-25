@@ -25,13 +25,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
-
 namespace EnemyCtrl;
 
 internal static class PluginInfo
 {
-    internal const string PLUGIN_GUID    = $"{AUTHOR}.{PLUGIN_NAME}";
-    internal const string PLUGIN_NAME    = "EnvyPeccatulumPVP";
+    internal const string PLUGIN_GUID = $"{AUTHOR}.{PLUGIN_NAME}";
+    internal const string PLUGIN_NAME = "EnvyPeccatulumPVP";
     internal const string PLUGIN_VERSION = "0.8.5";
     internal const string AUTHOR = "pluh.MT";
 }
@@ -39,8 +38,8 @@ internal static class PluginInfo
 [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
 public class EnemyCtrlPlugin : BasePlugin
 {
-    public static EnemyCtrlPlugin Instance;
-    public static ManualLogSource Logger;
+    public static EnemyCtrlPlugin Instance = null!;
+    public static ManualLogSource Logger = null!;
 
     public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
 
@@ -52,6 +51,9 @@ public class EnemyCtrlPlugin : BasePlugin
 
     public static Dictionary<ATTRIBUTE_TYPE, Texture2D> _sinTexture2d = new();
 
+    public static Dictionary<int, List<(int, int)>> _skillUpgradeList = new();
+    public static Dictionary<int, int> _specialSkillUpgradeCounter = new();
+
     public override void Load()
     {
         Instance = this;
@@ -61,6 +63,8 @@ public class EnemyCtrlPlugin : BasePlugin
         ClassInjector.RegisterTypeInIl2Cpp<EgoSelectionUI>();
 
         LoadSinTextures();
+
+        _skillUpgradeList.Add(2010011115, new List<(int, int)> { (1111501, 1111505), (1111502, 1111506), (1111503, 1111507) });
 
         var appearanceGuard = new Harmony(PluginInfo.PLUGIN_NAME);
         var appearanceFinalizer = new HarmonyMethod(typeof(EnemyCtrlPlugin).GetMethod(
@@ -98,7 +102,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
         if (Directory.Exists(path_resource))
         {
-            foreach(ATTRIBUTE_TYPE sinType in attribute_types)
+            foreach (ATTRIBUTE_TYPE sinType in attribute_types)
             {
                 string path_texture = Path.Combine(path_resource, sinType.ToString() + ".png");
                 if (File.Exists(path_texture))
@@ -135,21 +139,90 @@ public class EnemyCtrlPlugin : BasePlugin
         if (_reservedEgoStock.TryGetValue(sam.Pointer, out var sinDict))
         {
             foreach (ATTRIBUTE_TYPE sin in attribute_types)
-            _egoStockDict[sin] += sinDict[sin];
+
+                _egoStockDict[sin] += sinDict[sin];
 
             _reservedEgoStock.Remove(sam.Pointer);
             SyncEgoStockToGame();
         }
     }
 
-    private static void AddNewBag(BattleUnitModel unit, SkillBagState state)
+    public static bool CheckConditionsUpgrade(BattleUnitModel unit)
     {
-        SkillStaticDataList skillList = Singleton<StaticDataManager>.Instance._skillList;
+        // Logger.LogFatal("CheckConditionsUpgrade");
+        switch (unit.GetUnitID())
+        {
+            case 2010011115:
+                // Logger.LogFatal("Found 2010011115");
+                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0)
+                {
+                    // Logger.LogFatal("Conditons MET");
+                    return true;
+                }
+                return false;
+            default: return false;
+        }
+    }
+
+    public static void SpecialSkillUpgrade(BattleUnitModel unit, SkillBagState state, int slotIdx)
+    {
+        try
+        {
+            int unitId = unit.GetUnitID();
+            switch (unitId)
+            {
+                case 2010011115:
+                    if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.ResentmentSpiderOutis, false) != 15 || slotIdx != 0) return;
+                    if (state.OnDashboardSkills[0] == 1111503 || state.OnDashboardSkills[0] == 1111507) return;
+                    if (!_specialSkillUpgradeCounter.TryGetValue(unitId, out int counter)) _specialSkillUpgradeCounter[unitId] = 1;
+                    if (_specialSkillUpgradeCounter[unitId] > 3) return;
+                    state.OnDashboardSkills[0] = CheckConditionsUpgrade(unit) ? 1111507 : 1111503;
+                    _specialSkillUpgradeCounter[unitId]++;
+                    return;
+                default: return;
+            }
+        }
+        catch { }
+        ;
+    }
+
+    public static Il2CppSystem.Collections.Generic.List<UnitAttribute> GetSkillbagUpgrade(BattleUnitModel unit, SkillBagState state)
+    {
+        Il2CppSystem.Collections.Generic.List<UnitAttribute> skillList = new Il2CppSystem.Collections.Generic.List<UnitAttribute>();
+        if (!CheckConditionsUpgrade(unit) || !_skillUpgradeList.TryGetValue(unit.GetUnitID(), out var upgradeList)) return skillList;
+        for (int i = 0; i < 3; i++)
+        {
+            if (i >= upgradeList.Count) break;
+
+            int baseSkill = upgradeList[i].Item1;
+            int upgradedSkill = upgradeList[i].Item2;
+
+            UnitAttribute newSkillData = new UnitAttribute();
+            newSkillData.number = i + 1;
+            newSkillData.skillId = upgradedSkill;
+            skillList.Add(newSkillData);
+
+            for (int j = 0; j < state.SkillBag.Count; j++)
+            {
+                if (state.SkillBag[j] == baseSkill) state.SkillBag[j] = upgradedSkill;
+            }
+            for (int k = 0; k < state.OnDashboardSkills.Count; k++)
+            {
+                if (state.OnDashboardSkills[k] == baseSkill) state.OnDashboardSkills[k] = upgradedSkill;
+            }
+        }
+        return skillList;
+    }
+
+    public static void AddNewBag(BattleUnitModel unit, SkillBagState state)
+    {
+        Il2CppSystem.Collections.Generic.List<UnitAttribute> skillList = GetSkillbagUpgrade(unit, state);
+        if (skillList.Count == 0) skillList = unit.UnitDataModel._unitAttributeList;
         List<int> aNewBag = new();
 
         if (unit.UnitDataModel?._unitKeywordList != null)
         {
-            foreach (UnitAttribute unitAttribute in unit.UnitDataModel._unitAttributeList)
+            foreach (UnitAttribute unitAttribute in skillList)
             {
                 aNewBag.AddRange(Enumerable.Repeat(unitAttribute.skillId, unitAttribute.number));
             }
@@ -174,11 +247,16 @@ public class EnemyCtrlPlugin : BasePlugin
 
         _currentTurnSamSkillBag[sam.Pointer] = state;
 
-        if (state.SkillIdUsedLastTurn.HasValue)
+        if (state.SkillIdUsedLastTurn.HasValue && state.indexLastTurn.HasValue)
         {
-            state.OnDashboardSkills.Remove(state.SkillIdUsedLastTurn.Value);
+            // state.OnDashboardSkills.Remove(state.SkillIdUsedLastTurn.Value);
+            state.OnDashboardSkills.RemoveAt(state.indexLastTurn.Value);
+            state.indexLastTurn = null;
             state.SkillIdUsedLastTurn = null;
         }
+
+        GetSkillbagUpgrade(unit, state);
+        SpecialSkillUpgrade(unit, state, slotIdx);
 
         while (state.OnDashboardSkills.Count < 2)
         {
@@ -193,7 +271,7 @@ public class EnemyCtrlPlugin : BasePlugin
         if (sam.currentSinList == null) sam.currentSinList = new();
         sam.currentSinList.Clear();
 
-        foreach(int skillId in state.OnDashboardSkills) sam.currentSinList.Add(new UnitSinModel(skillId, unit, sam));
+        foreach (int skillId in state.OnDashboardSkills) sam.currentSinList.Add(new UnitSinModel(skillId, unit, sam));
     }
 
     public class SkillBagState
@@ -201,13 +279,14 @@ public class EnemyCtrlPlugin : BasePlugin
         public List<int> SkillBag = new();
         public List<int> OnDashboardSkills = new();
         public int? SkillIdUsedLastTurn = null;
+        public int? indexLastTurn = null;
     }
 
     public class EgoSelectionUI : MonoBehaviour
     {
-        public EgoSelectionUI(IntPtr ptr) : base(ptr) {}
+        public EgoSelectionUI(IntPtr ptr) : base(ptr) { }
 
-        public static EgoSelectionUI _instance;
+        public static EgoSelectionUI _instance = null!;
         public static EgoSelectionUI Instance
         {
             get
@@ -239,7 +318,7 @@ public class EnemyCtrlPlugin : BasePlugin
         private const int WIDTH = 800;
         private const int HEIGHT = 700;
         private Rect _panelRect = new Rect(Screen.width / 2 - WIDTH / 2, Screen.height / 2 - HEIGHT / 2, WIDTH, HEIGHT);
-        private SinActionModel _currentSam;
+        private SinActionModel _currentSam = null!;
         private Dictionary<BattleEgoModel, bool> _egoModelPair = new();
 
         public void OpenPanel(SinActionModel sam)
@@ -253,7 +332,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
             if (egoList != null)
             {
-                foreach(BattleEgoModel egoModel in egoList)
+                foreach (BattleEgoModel egoModel in egoList)
                 {
                     _egoModelPair.Add(egoModel, false);
                 }
@@ -295,7 +374,7 @@ public class EnemyCtrlPlugin : BasePlugin
             GUILayout.BeginVertical();
             GUILayout.Space(25);
 
-            foreach(var ego in _egoModelPair)
+            foreach (var ego in _egoModelPair)
             {
                 GUILayout.BeginVertical();
 
@@ -304,7 +383,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
                 string name = ego.Key.AwakeningSkillModel.skillData.skillName;
                 SkillModel skillModel = ego.Value ? ego.Key.CorrosionSkillModel : ego.Key.AwakeningSkillModel;
-                bool isStable = (_currentSam.UnitModel.Mp - skillModel.GetMpUsage()) <= -45 ? false : true;
+                bool isStable = (_currentSam.UnitModel.Mp - skillModel.skillData.mpUsage <= -45) ? false : true;
 
                 GUI.enabled = CanUseEgo(ego.Key, ego.Value);
                 if (GUILayout.Button((ego.Value ? $"<color=#FF0000>[CORROSION]</color>" : "") + (isStable ? "" : $"<color=#FF0000> [UNSTABLE]</color>") + name, GUILayout.Height(40))) SelectEgo(ego.Key, ego.Value);
@@ -312,7 +391,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
                 // if (ego.Key._corrosionSkillModel != null)
                 if (GUILayout.Button(ego.Value ? "To Awakening" : "<color=#FF0000>To Corrosion</color>", GUILayout.Width(100), GUILayout.Height(40)))
-                _egoModelPair[ego.Key] = !ego.Value;
+                    _egoModelPair[ego.Key] = !ego.Value;
 
                 GUILayout.EndHorizontal();
 
@@ -320,7 +399,7 @@ public class EnemyCtrlPlugin : BasePlugin
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("", GUILayout.ExpandWidth(true));
 
-                foreach(ATTRIBUTE_TYPE sin in attribute_types)
+                foreach (ATTRIBUTE_TYPE sin in attribute_types)
                 {
                     int neededSinAmount = ego.Key.GetNeedResourceCount(sin, ego.Value);
                     if (neededSinAmount > 0)
@@ -342,7 +421,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
                 Il2CppSystem.Collections.Generic.List<AttributeResistData> sinResList = Singleton<StaticDataManager>.Instance.EgoList.GetData(ego.Key.GetId()).attributeResistList;
 
-                foreach(AttributeResistData resistData in sinResList)
+                foreach (AttributeResistData resistData in sinResList)
                 {
                     if (resistData.Type == ATTRIBUTE_TYPE.WHITE || resistData.Type == ATTRIBUTE_TYPE.BLACK) continue;
                     if (_sinTexture2d.TryGetValue(resistData.Type, out var sinicon))
@@ -372,14 +451,14 @@ public class EnemyCtrlPlugin : BasePlugin
             _panelRect = GUI.Window(
                 31037,
                 _panelRect,
-                (GUI.WindowFunction) DrawUI,
+                (GUI.WindowFunction)DrawUI,
                 "The E.G.O Files are CRAZY!"
             );
         }
 
         private bool CanUseEgo(BattleEgoModel bem, bool isCorrosion)
         {
-            foreach(ATTRIBUTE_TYPE sin in attribute_types)
+            foreach (ATTRIBUTE_TYPE sin in attribute_types)
             {
                 if (bem.GetNeedResourceCount(sin, false) > _egoStockDict[sin]) return false;
             }
@@ -395,8 +474,8 @@ public class EnemyCtrlPlugin : BasePlugin
 
             if (currentBottomSkill != null)
 
-            if (!currentBottomSkill.IsDefense() && !currentBottomSkill.IsEgoSkill() && !currentBottomSkill.IsEgoOverclock())
-            EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer] = currentBottomSkill.GetID();
+                if (!currentBottomSkill.IsDefense() && !currentBottomSkill.IsEgoSkill() && !currentBottomSkill.IsEgoOverclock())
+                    EnemyCtrlPatches._defenseSkillSwapPreserve[_currentSam.Pointer] = currentBottomSkill.GetID();
 
             RefundEgoResource(_currentSam);
 
@@ -405,7 +484,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
             Dictionary<ATTRIBUTE_TYPE, int> newCost = attribute_types.ToDictionary(sin => sin, sin => bem.GetNeedResourceCount(sin, isCorrosion));
 
-            foreach(ATTRIBUTE_TYPE sin in attribute_types) _egoStockDict[sin] -= newCost[sin];
+            foreach (ATTRIBUTE_TYPE sin in attribute_types) _egoStockDict[sin] -= newCost[sin];
 
             _reservedEgoStock[_currentSam.Pointer] = newCost;
 
@@ -416,9 +495,9 @@ public class EnemyCtrlPlugin : BasePlugin
 
             if (controller != null)
             {
-                NewOperationSinActionSlot newOperationSinActionSlot = null;
+                NewOperationSinActionSlot? newOperationSinActionSlot = null;
 
-                foreach(NewOperationSinActionSlot slot in controller._sinActionSlotList)
+                foreach (NewOperationSinActionSlot slot in controller._sinActionSlotList)
                 {
                     if (slot?.SinAction?.Pointer == _currentSam.Pointer && slot.SinAction != null)
                     {
@@ -444,8 +523,8 @@ internal static class EnemyCtrlPatches
     static readonly HashSet<IntPtr> _injectedEnemies = new();
     static readonly Dictionary<IntPtr, (SinActionModel target, UnitSinModel sin)> _targets = new();
     static readonly Dictionary<IntPtr, SinActionModel> _pinned = new();
-    static SinActionModel? _drag     = null;
-    static UnitSinModel?   _dragSin  = null;
+    static SinActionModel? _drag = null;
+    static UnitSinModel? _dragSin = null;
     static SinActionModel? _hoverSam = null;
     static readonly HashSet<int> _triggeredSlots = new();
     static int _actionSeq = 0;
@@ -455,7 +534,7 @@ internal static class EnemyCtrlPatches
     static readonly Dictionary<IntPtr, SinActionModel> _portraitSam = new();
     public static readonly Dictionary<IntPtr, int> _defenseSkillSwapPreserve = new();
 
-    static SinActionModel? _pendingDuelEnemy  = null;
+    static SinActionModel? _pendingDuelEnemy = null;
     static SinActionModel? _pendingDuelSinner = null;
 
     [HarmonyPatch(typeof(BattleUIRoot), nameof(BattleUIRoot.OnRoundStart))]
@@ -477,10 +556,10 @@ internal static class EnemyCtrlPatches
         _duelIntent.Clear();
         _actionSeq = 0;
         if (_drag != null) CancelDrag();
-        _drag             = null;
-        _dragSin          = null;
-        _hoverSam         = null;
-        _pendingDuelEnemy  = null;
+        _drag = null;
+        _dragSin = null;
+        _hoverSam = null;
+        _pendingDuelEnemy = null;
         _pendingDuelSinner = null;
 
         _portraitSam.Clear();
@@ -498,11 +577,11 @@ internal static class EnemyCtrlPatches
         _targets.Clear();
         _pinned.Clear();
         _duelIntent.Clear();
-        _actionSeq        = 0;
-        _drag             = null;
-        _dragSin          = null;
-        _hoverSam         = null;
-        _pendingDuelEnemy  = null;
+        _actionSeq = 0;
+        _drag = null;
+        _dragSin = null;
+        _hoverSam = null;
+        _pendingDuelEnemy = null;
         _pendingDuelSinner = null;
         _triggeredSlots.Clear();
 
@@ -512,6 +591,7 @@ internal static class EnemyCtrlPatches
         EnemyCtrlPlugin.ResetEgoStock();
         EnemyCtrlPlugin._skillBagStates.Clear();
         EnemyCtrlPlugin._currentTurnSamSkillBag.Clear();
+        EnemyCtrlPlugin._specialSkillUpgradeCounter.Clear();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -569,15 +649,15 @@ internal static class EnemyCtrlPatches
 
     static void EnsureUiSlots(NewOperationController ctrl, int needed)
     {
-        var sinSlots  = ctrl._sinActionSlotList;
+        var sinSlots = ctrl._sinActionSlotList;
         var portraits = ctrl._portraitlist;
         int have = sinSlots.Count;
         if (have >= needed) return;
 
-        var sinTemplate      = sinSlots[0];
+        var sinTemplate = sinSlots[0];
         var portraitTemplate = portraits[0];
-        var sinParent        = ctrl.rect_sinActionSlotParent;
-        var portraitParent   = ctrl.rect_portraitSlotParent;
+        var sinParent = ctrl.rect_sinActionSlotParent;
+        var portraitParent = ctrl.rect_portraitSlotParent;
 
         for (int i = have; i < needed; i++)
         {
@@ -633,7 +713,7 @@ internal static class EnemyCtrlPatches
             var sinnerSam = slots[lastIdx].SinAction;
             if (sinnerSam == null || IsEnemy(sinnerSam)) return;
 
-            _pendingDuelEnemy  = enemySam;
+            _pendingDuelEnemy = enemySam;
             _pendingDuelSinner = sinnerSam;
         }
         catch { }
@@ -648,7 +728,7 @@ internal static class EnemyCtrlPatches
         if (!IsEnemy(sam)) return;
         if (_pendingDuelEnemy?.Pointer == sam?.Pointer)
         {
-            _pendingDuelEnemy  = null;
+            _pendingDuelEnemy = null;
             _pendingDuelSinner = null;
         }
     }
@@ -662,9 +742,9 @@ internal static class EnemyCtrlPatches
         try
         {
             if (!__instance.IsDrawing) return;
-            var enemySam  = _pendingDuelEnemy;
+            var enemySam = _pendingDuelEnemy;
             var sinnerSam = _pendingDuelSinner;
-            _pendingDuelEnemy  = null;
+            _pendingDuelEnemy = null;
             _pendingDuelSinner = null;
 
             _duelIntent[enemySam.Pointer] = (sinnerSam, ++_actionSeq);
@@ -721,7 +801,7 @@ internal static class EnemyCtrlPatches
 
             if (sinList != null && sinList.Count > 0)
             {
-                SetEnemySinSlot(__instance._firstSinSlot,  sinList.Count > 0 ? sinList[0] : null);
+                SetEnemySinSlot(__instance._firstSinSlot, sinList.Count > 0 ? sinList[0] : null);
                 SetEnemySinSlot(__instance._secondSinSlot, sinList.Count > 1 ? sinList[1] : null);
             }
             else
@@ -881,13 +961,13 @@ internal static class EnemyCtrlPatches
         if (!IsEnemy(targetSinAction)) return;
         try
         {
-            var enemyAction  = targetSinAction.CurrentBattleAction;
+            var enemyAction = targetSinAction.CurrentBattleAction;
             var playerAction = __instance.CurrentBattleAction;
 
             bool isForcedTarget = _targets.TryGetValue(targetSinAction.Pointer, out var tgt)
                                && tgt.target?.Pointer == __instance.Pointer;
 
-            if (enemyAction  != null) _pinned.Remove(enemyAction.Pointer);
+            if (enemyAction != null) _pinned.Remove(enemyAction.Pointer);
             if (playerAction != null) _pinned.Remove(playerAction.Pointer);
             _duelIntent.Remove(targetSinAction.Pointer);
 
@@ -944,7 +1024,7 @@ internal static class EnemyCtrlPatches
                 var (targetSam, intendedSin) = entry;
                 if (targetSam == null) continue;
 
-                BattleActionModel action = null;
+                BattleActionModel? action = null;
                 try { action = intendedSin?.GetBattleActionModel(); } catch { }
                 if (action == null) action = sam._currentBattleAction;
                 if (action == null) continue;
@@ -1176,7 +1256,7 @@ internal static class EnemyCtrlPatches
                 else
                 {
                     if ((!isEgo && !isEgoOverclock) || !_defenseSkillSwapPreserve.ContainsKey(sam.Pointer))
-                    _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
+                        _defenseSkillSwapPreserve[sam.Pointer] = bottomSin.GetSkill().GetID();
 
                     currentSinList[0] = new UnitSinModel(defaultDefSkillId, unit, sam);
                 }
@@ -1185,9 +1265,9 @@ internal static class EnemyCtrlPatches
 
                 if (controller != null)
                 {
-                    NewOperationSinActionSlot newOperationSinActionSlot = null;
+                    NewOperationSinActionSlot? newOperationSinActionSlot = null;
 
-                    foreach(NewOperationSinActionSlot slot in controller._sinActionSlotList)
+                    foreach (NewOperationSinActionSlot slot in controller._sinActionSlotList)
                     {
                         if (slot?.SinAction?.Pointer == sam.Pointer && slot.SinAction != null)
                         {
@@ -1240,8 +1320,13 @@ internal static class EnemyCtrlPatches
 
         try
         {
-            _drag    = sam;
+            _drag = sam;
             _dragSin = __instance._unitSin;
+
+            if (EnemyCtrlPlugin._currentTurnSamSkillBag.TryGetValue(sam.Pointer, out var skillBagState))
+            {
+                skillBagState.indexLastTurn = (__instance == __instance._sinActionSlot?._firstSinSlot) ? 0 : 1;
+            }
 
             var ctrl = SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController;
             try { ctrl?.StartDragForAb(__instance); }
@@ -1268,10 +1353,13 @@ internal static class EnemyCtrlPatches
 
             if (EnemyCtrlPlugin._currentTurnSamSkillBag.TryGetValue(sam.Pointer, out var skillBagState))
             {
-                if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.UnitModel.Pointer, out int skillId))){
-                skillBagState.SkillIdUsedLastTurn = skillId;}
+                if ((skill.IsDefense() || skill.IsEgoSkill() || skill.IsEgoOverclock()) && (_defenseSkillSwapPreserve.TryGetValue(sam.UnitModel.Pointer, out int skillId)))
+                {
+                    skillBagState.SkillIdUsedLastTurn = skillId;
+                }
                 else
-                skillBagState.SkillIdUsedLastTurn = __instance.GetID();
+                    skillBagState.SkillIdUsedLastTurn = __instance.GetID();
+
             }
         }
         EnemyCtrlPlugin.SyncEgoStockToGame();
@@ -1281,7 +1369,7 @@ internal static class EnemyCtrlPatches
     {
         if (_drag == null) return;
         var unitSin = _dragSin ?? (_drag.currentSinList?.Count > 0 ? _drag.currentSinList[0] : null);
-        _drag    = null;
+        _drag = null;
         _dragSin = null;
         _hoverSam = null;
         ClearCustomArrows();
@@ -1302,7 +1390,7 @@ internal static class EnemyCtrlPatches
         {
             return attacker.GetCurrentSpeed() > target.GetCurrentSpeed();
         }
-        catch {}
+        catch { }
 
         return false;
     }
@@ -1311,14 +1399,14 @@ internal static class EnemyCtrlPatches
     {
         try
         {
-            var actionMgr   = Singleton<BattleActionModelManager>.Instance;
+            var actionMgr = Singleton<BattleActionModelManager>.Instance;
             if (actionMgr == null) return;
-            var enemyAction  = enemySam.CurrentBattleAction;
+            var enemyAction = enemySam.CurrentBattleAction;
             var playerAction = playerSam.CurrentBattleAction;
             if (enemyAction == null || playerAction == null) return;
 
             var playerTargetUnit = playerAction.GetMainTarget();
-            var enemyUnit        = enemySam.UnitModel;
+            var enemyUnit = enemySam.UnitModel;
             if (enemyUnit == null) return;
             // if (playerTargetUnit.Pointer != enemyUnit.Pointer) return;
 
@@ -1333,21 +1421,21 @@ internal static class EnemyCtrlPatches
                 {
                     playerAction.ChangeMainTargetSinAction(enemySam, enemyAction, true);
                 }
-                catch {}
+                catch { }
             }
 
             try
             {
                 enemyAction.ChangeMainTargetSinAction(playerSam, playerAction, true);
             }
-            catch {}
+            catch { }
 
 
             actionMgr.RemoveDuel(enemyAction);
             actionMgr.RemoveDuel(playerAction);
 
             if (BattleActionModel.CanDuelBoth(playerAction, enemyAction))
-            actionMgr.AddDuel(playerAction, enemyAction);
+                actionMgr.AddDuel(playerAction, enemyAction);
         }
         catch { }
     }
@@ -1395,13 +1483,13 @@ internal static class EnemyCtrlPatches
             var arrowPtr = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_new(
                 Il2CppInterop.Runtime.Il2CppClassPointerStore<BattleTargetArrow>.NativeClassPtr);
             var arrow = new BattleTargetArrow(arrowPtr);
-            arrow.sinAction1   = sourceEnemy;
-            arrow.sinAction2   = targetPlayer;
-            arrow.transform1   = t1;
-            arrow.transform2   = t2;
-            arrow.isMain       = true;
-            arrow.isParrying   = false;
-            arrow.winRate      = 0f;
+            arrow.sinAction1 = sourceEnemy;
+            arrow.sinAction2 = targetPlayer;
+            arrow.transform1 = t1;
+            arrow.transform2 = t2;
+            arrow.isMain = true;
+            arrow.isParrying = false;
+            arrow.winRate = 0f;
             arrow.startFaction = UNIT_FACTION.ENEMY;
             try { arrow.battleAction1 = sourceEnemy.CurrentBattleAction; } catch { }
             try { arrow.battleAction2 = targetPlayer.CurrentBattleAction; } catch { }
