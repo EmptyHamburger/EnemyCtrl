@@ -177,6 +177,25 @@ public class EnemyCtrlPlugin : BasePlugin
         SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._secondSinSlot._effectManager._skillEffectList.Clear();
     }
 
+    public static void OnRoundStartSpecial(BattleUnitModel unit)
+    {
+        switch (unit.GetUnitID())
+        {
+            case 2010010916:
+                System.Collections.Generic.List<BattleUnitModel> playerList = [.. Singleton<SinManager>.Instance._battleObjectManager.GetAliveList(true, UNIT_FACTION.PLAYER)];
+                playerList.Sort((x, y) => x.Hp.CompareTo(y.Hp));
+
+                foreach(BattleUnitModel sinner in playerList) if (sinner._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0) return;
+
+                Il2CppSystem.Collections.Generic.List<BuffHistory> buffHistories = new();
+                buffHistories.Add(new BuffHistory(unit, 1, 0, ABILITY_SOURCE_TYPE.PASSIVE));
+
+                playerList[0]._buffDetail.AddBuff(playerList[0], BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, buffHistories, 0, ABILITY_SOURCE_TYPE.PASSIVE, BATTLE_EVENT_TIMING.ON_START_ROUND, null, out int adderStack, out int adderTurn, out int overStack, out int overTurn);
+                return;
+            default: return;
+        }
+    }
+
     public static void ResetCustomVariables()
     {
         TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
@@ -215,22 +234,27 @@ public class EnemyCtrlPlugin : BasePlugin
                     return;
                 case 2010010916:
                     if (slotIdx != 0) return;
-                    if (state.OnDashboardSkills.Contains(1091607)) return;
-
                     if (TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye)
                     {
-                        state.OnDashboardSkills[1] = 1091607;
                         TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
+                        if (!state.OnDashboardSkills.Contains(1091607))
+                        {
+                            if (state.OnDashboardSkills.Count > 1) state.OnDashboardSkills[1] = 1091607;
+                            else state.OnDashboardSkills.Add(1091607);
+                            
+                            TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
+                            TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;
+                        }
                     }
                     
                     if (TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck)
                     {
-                        TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
-                        state.OnDashboardSkills[1] = 1091607;
+                        if (state.OnDashboardSkills.Count > 1) state.OnDashboardSkills[1] = 1091607;
+                        else state.OnDashboardSkills.Add(1091607);
 
+                        TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
                         TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = true;
                     }
-                    else TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;
 
                     return;
                 default: return;
@@ -250,7 +274,7 @@ public class EnemyCtrlPlugin : BasePlugin
 
             int baseSkill = upgradeList[i].Item1;
             int upgradedSkill = upgradeList[i].Item2;
-            if (baseSkill == -1 || upgradedSkill == -1) break;
+            if (baseSkill == -1 || upgradedSkill == -1) continue;
 
             UnitAttribute newSkillData = new UnitAttribute();
             newSkillData.number = i + 1;
@@ -577,6 +601,7 @@ internal static class EnemyCtrlPatches
     static bool _cmdOpen = false;
     static readonly HashSet<IntPtr> _injectedEnemies = new();
     static readonly Dictionary<IntPtr, (SinActionModel target, UnitSinModel sin)> _targets = new();
+    static readonly Dictionary<IntPtr, List<SinActionModel>> _enemyTargetList = new();
     static readonly Dictionary<IntPtr, SinActionModel> _pinned = new();
     static SinActionModel? _drag = null;
     static UnitSinModel? _dragSin = null;
@@ -607,6 +632,7 @@ internal static class EnemyCtrlPatches
         _cmdOpen = false;
         _injectedEnemies.Clear();
         _targets.Clear();
+        _enemyTargetList.Clear();
         _pinned.Clear();
         _duelIntent.Clear();
         _actionSeq = 0;
@@ -630,6 +656,7 @@ internal static class EnemyCtrlPatches
     {
         _injectedEnemies.Clear();
         _targets.Clear();
+        _enemyTargetList.Clear();
         _pinned.Clear();
         _duelIntent.Clear();
         _actionSeq = 0;
@@ -939,10 +966,7 @@ internal static class EnemyCtrlPatches
         if (targetSinAction.Pointer == __instance.Pointer) return;
         if (IsEnemy(targetSinAction)) return;
         _targets[__instance.Pointer] = (targetSinAction, sin);
-
-        // long ptr = __instance.UnitModel.Pointer.ToInt64();
-
-        // EnemyCtrlPlugin._skillBagStates[__instance.UnitModel.Pointer.ToInt64()].SkillIdUsedLastTurn = sin.GetSkill()?.GetID();
+        _enemyTargetList[__instance.Pointer] = ComputeFrozenTargets(__instance, targetSinAction, sin);
 
         try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); }
         catch { }
@@ -1130,6 +1154,16 @@ internal static class EnemyCtrlPatches
                 }
                 catch { }
             }
+            foreach (var (sam, action, targetSam) in applied)
+            {
+                try
+                {
+                    if (action == null || action.GetAttackWeight() <= 1) continue;
+                    action.ChangeAllSubTarget();
+                }
+                catch { }
+            }
+
             try { SingletonBehavior<BattleUIRoot>.Instance?.ClearAllArrows(); } catch { }
             ClearCustomArrows();
         }
@@ -1175,8 +1209,7 @@ internal static class EnemyCtrlPatches
     [HarmonyPostfix]
     static void AttachTargetTriggers(BattleUnitModel __instance)
     {
-
-        // EnemyCtrlPlugin.RoundStartCheckConditionUpgrade(__instance);
+        EnemyCtrlPlugin.OnRoundStartSpecial(__instance);
         if (!__instance.IsFaction(UNIT_FACTION.PLAYER)) return;
         try
         {
@@ -1502,7 +1535,7 @@ internal static class EnemyCtrlPatches
         _customArrows.Clear();
     }
 
-    static void SpawnArrow(SinActionModel sourceEnemy, SinActionModel targetPlayer)
+    static void SpawnArrow(SinActionModel sourceEnemy, SinActionModel targetPlayer, bool isMain = true)
     {
         try
         {
@@ -1532,13 +1565,13 @@ internal static class EnemyCtrlPatches
             var arrowPtr = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_new(
                 Il2CppInterop.Runtime.Il2CppClassPointerStore<BattleTargetArrow>.NativeClassPtr);
             var arrow = new BattleTargetArrow(arrowPtr);
-            arrow.sinAction1 = sourceEnemy;
-            arrow.sinAction2 = targetPlayer;
-            arrow.transform1 = t1;
-            arrow.transform2 = t2;
-            arrow.isMain = true;
-            arrow.isParrying = false;
-            arrow.winRate = 0f;
+            arrow.sinAction1   = sourceEnemy;
+            arrow.sinAction2   = targetPlayer;
+            arrow.transform1   = t1;
+            arrow.transform2   = t2;
+            arrow.isMain       = isMain;
+            arrow.isParrying   = false;
+            arrow.winRate      = 0f;
             arrow.startFaction = UNIT_FACTION.ENEMY;
             try { arrow.battleAction1 = sourceEnemy.CurrentBattleAction; } catch { }
             try { arrow.battleAction2 = targetPlayer.CurrentBattleAction; } catch { }
@@ -1547,6 +1580,69 @@ internal static class EnemyCtrlPatches
             _customArrows.Add(arrowUI);
         }
         catch { }
+    }
+
+        static List<SinActionModel> ComputeFrozenTargets(SinActionModel enemy, SinActionModel mainTarget, UnitSinModel sin)
+    {
+        var list = new List<SinActionModel>();
+
+        BattleActionModel? action = null;
+        try { action = sin?.GetBattleActionModel(); } catch { }
+        if (action == null) try { action = enemy.CurrentBattleAction; } catch { }
+        if (action == null)
+        {
+            if (mainTarget != null && mainTarget.Pointer != IntPtr.Zero) list.Add(mainTarget);
+            return list;
+        }
+
+        int weight = 1;
+        try { weight = action.GetAttackWeight(); } catch { }
+
+        try { action.ChangeMainTargetSinAction(mainTarget, null, true); } catch { }
+        if (weight > 1) { try { action.ChangeAllSubTarget(); } catch { } }
+
+        SinActionModel mainSin = mainTarget;
+        try { var m = action.GetMainTargetSinAction(); if (m != null) mainSin = m; } catch { }
+
+        var seen = new HashSet<IntPtr>();
+        if (mainSin != null && mainSin.Pointer != IntPtr.Zero) { list.Add(mainSin); seen.Add(mainSin.Pointer); }
+
+        Il2CppSystem.Collections.Generic.List<SinActionModel>? tl = null;
+        try { tl = action.GetTargetSinActionList(); } catch { }
+        if (tl != null)
+        {
+            foreach (var t in tl)
+            {
+                if (t == null || t.Pointer == IntPtr.Zero) continue;
+                if (IsEnemy(t)) continue;
+                if (!seen.Add(t.Pointer)) continue;
+                list.Add(t);
+                if (list.Count >= weight) break;
+            }
+        }
+
+        try { action.ResetAllTargetData(); } catch { }
+
+        return list;
+    }
+
+    static void SpawnArrowsForEnemy(SinActionModel enemy, SinActionModel fallbackMain, UnitSinModel sin)
+    {
+        if (!_enemyTargetList.TryGetValue(enemy.Pointer, out var list) || list == null || list.Count == 0)
+        {
+            if (fallbackMain != null) SpawnArrow(enemy, fallbackMain, true);
+            return;
+        }
+
+        var seen = new HashSet<IntPtr>();
+        bool isMain = true;
+        foreach (var t in list)
+        {
+            if (t == null || t.Pointer == IntPtr.Zero) continue;
+            if (!seen.Add(t.Pointer)) continue;
+            SpawnArrow(enemy, t, isMain);
+            isMain = false;
+        }
     }
 
     static void DrawDragArrow(SinActionModel sourceEnemy, SinActionModel targetPlayer)
@@ -1575,7 +1671,8 @@ internal static class EnemyCtrlPatches
                 if (e == null) continue;
                 if (!_targets.TryGetValue(e.Pointer, out var entry)) continue;
                 if (entry.target == null) continue;
-                SpawnArrow(e, entry.target);
+                SpawnArrowsForEnemy(e, entry.target, entry.sin);
+
             }
         }
         catch { }
@@ -1597,23 +1694,34 @@ internal static class EnemyCtrlPatches
 
 
 
-    [HarmonyPatch(typeof(BuffAbility_FutureEyeOnRodionLimitPerTurn), nameof(BuffAbility_FutureEyeOnRodionLimitPerTurn.RightAfterLosingBuff))]
-	[HarmonyPostfix]
-    public static void GetCheck(BattleUnitModel unit, int loseStack, int loseTurn, BATTLE_EVENT_TIMING timing, BuffInfo info, BuffAbility_FutureEyeOnRodionLimitPerTurn __instance)
+    [HarmonyPatch(typeof(BattleUnitModel), nameof(BattleUnitModel.RightAfterLosingBuff))]
+    [HarmonyPostfix]
+    public static void Postfix_BattleUnitModel_RightAfterLosingBuff(int loseStack, int loseTurn, BuffInfo loseBuffInfo, BATTLE_EVENT_TIMING timing, BattleUnitModel __instance)
     {
-        if (unit.GetUnitID() == 2010010916) EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = true;
+        if (__instance.GetUnitID() == 2010010916 && loseBuffInfo._mainKeyword == BUFF_UNIQUE_KEYWORD.FutureEyeOnRodion && loseBuffInfo._stack == 0)
+        {
+            EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = true;
+            EnemyCtrlPlugin.Logger.LogFatal("LOSE EYE OF PRECOGNITION");
+        }
     }
 
-    [HarmonyPatch(typeof(BattleUnitModel), nameof(BattleUnitModel.OnKillTarget))]
+    [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnKillTarget))]
 	[HarmonyPostfix]
-	public static void Postfix_BattleUnitModel_OnKillTarget(BattleActionModel actionOrNull, BattleUnitModel target, DAMAGE_SOURCE_TYPE dmgSrcType, BATTLE_EVENT_TIMING timing, BattleUnitModel killer, BattleUnitModel __instance)
+	public static void Postfix_BattleUnitModel_OnKillTargetOnKillTarget(BattleActionModel actionOrNull, BattleUnitModel target, DAMAGE_SOURCE_TYPE dmgSrcType, BATTLE_EVENT_TIMING timing)
 	{
         if (actionOrNull == null || actionOrNull.Skill == null) return;
+        EnemyCtrlPlugin.Logger.LogFatal("ON KILL TRIGGERED");
+        EnemyCtrlPlugin.Logger.LogFatal(actionOrNull.Model.GetUnitID());
+        EnemyCtrlPlugin.Logger.LogFatal(actionOrNull.GetSkillID());
+        EnemyCtrlPlugin.Logger.LogFatal(target._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false));
 
-        if (__instance.GetUnitID() == 2010010916 &&
+        if (actionOrNull.Model.GetUnitID() == 2010010916 &&
         actionOrNull.GetSkillID() == 1091607 && 
         target._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0 &&
         !EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal)
-        EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = true;
+        {
+            EnemyCtrlPlugin.Logger.LogFatal("KILLED GAME TARGET WITH DISPOSAL");
+            EnemyCtrlPlugin.TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = true;
+        }
     }
 }
