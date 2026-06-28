@@ -26,6 +26,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Unity.Collections;
 using EnvyPeccatulumPVP.Patches;
+using System.Diagnostics;
 
 namespace EnvyPeccatulumPVP;
 
@@ -44,6 +45,14 @@ public class EnvyPeccatulumPVP : BasePlugin
     public static ManualLogSource Logger = null!;
     public static Harmony harmony = null!;
 
+    public class SkillBagState
+    {
+        public List<int> SkillBag = new();
+        public List<int> OnDashboardSkills = new();
+        public int? SkillIdUsedLastTurn = null;
+        public int? indexLastTurn = null;
+    }
+
     public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
 
     public static Dictionary<IntPtr, List<SkillBagState>> _skillBagStates = new();
@@ -60,9 +69,19 @@ public class EnvyPeccatulumPVP : BasePlugin
     //The House of Spiders: The Thumb Nursefather Rodion
     public static bool TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
     public static bool TheHouseOfSpidersTheThumbNursefatherRodion_DisposalKillCheck = false;
-    public static bool TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;    
+    public static bool TheHouseOfSpidersTheThumbNursefatherRodion_IsAddedDisposal = false;
 
+    //The House of Spiders: The Ring Nursefather Hong Lu
     public static bool TheHouseOfSpidersTheRingNursefatherHongLu_ClosingTimeCheck = false;
+
+    //The House of Spiders: The Index Nursefather Yi Sang
+    public static bool TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = false;
+    public static bool TheHouseOfSpidersTheIndexNursefatherYiSang_ExecutedOnPrescriptTarget = false;
+    public static int TheHouseOfSpidersTheIndexNursefatherYiSang_CurrentUnlockRank = 0;
+
+    //Shi Assoc. East Section 3 Faust
+    public static bool ShiAssocEastSection3Faust_ActivatedNoS3 = false;
+    
     public override void Load()
     {
         Instance = this;
@@ -79,6 +98,12 @@ public class EnvyPeccatulumPVP : BasePlugin
         _skillUpgradeList[2010011115] = new List<(int, int)> {(1111501, 1111505), (1111502, 1111506), (1111503, 1111507)}; //The House of Spiders: The Middle Nursefather Outis
         _skillUpgradeList[2010010916] = new List<(int, int)> {(-1, -1), (1091602, 1091606)}; //The House of Spiders: The Thumb Nursefather Rodion
         _skillUpgradeList[2010010215] = new List<(int, int)> {(1021501, 1021505), (1021502, 1021506), (1021503, 1021507)}; //The House of Spiders: The Ring Apprentice Faust
+        _skillUpgradeList[2010010312] = new List<(int, int)> {(1031201, 1031205), (1031202, 1031206), (1031203, 1031207)}; //Lobotomy E.G.O::In the Name of Love and Hate Don Quixote
+        _skillUpgradeList[2010010913] = new List<(int, int)> {(1091301, 1091305), (1091302, 1091306), (1091303, 1091307)}; //Lobotomy E.G.O::The Sword Sharpened with Tears Rodion
+        _skillUpgradeList[2010010512] = new List<(int, int)> {(-1, -1), (-1, -1), (1051203, 1051205)}; //The Thumb East Capo IIII Meursault
+        _skillUpgradeList[2010010611] = new List<(int, int)> {(-1, -1), (1061102, 1061106), (1061103, 1061108)}; //Full-Stop Office Rep Hong Lu
+        _skillUpgradeList[2010010710] = new List<(int, int)> {(-1, -1), (-1, -1), (1071003, 1071005)}; //Wild Hunt Heathcliff
+        _skillUpgradeList[2010011009] = new List<(int, int)> {(-1, -1), (-1, -1), (1100903, 1100905)}; //Dawn Office Fixer Sinclair
 
         var appearanceGuard = new Harmony(PluginInfo.PLUGIN_NAME);
         var appearanceFinalizer = new HarmonyMethod(typeof(EnvyPeccatulumPVP).GetMethod(
@@ -195,19 +220,18 @@ public class EnvyPeccatulumPVP : BasePlugin
         }
     }
 
-    public static void ApplyIndexEffect(BattleUnitModel unit, bool prioritizeSkill3)
+    public static void ApplyIndexEffect(SinActionModel sam, bool prioritizeSkill3)
     {
-        NewOperationController ctrl = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
-
-        Il2CppSystem.Collections.Generic.List<SinActionModel> samList = unit.GetSinActionList();
-
-        for (int j = 0; j < 2; j ++)
+        try
         {
-            if (j == samList.Count) break;
-
+            NewOperationController? ctrl = SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController;
             List<(int idx, int tier)> slotDatas = new();
-            SinActionModel sam = samList[j];
-            NewOperationSinActionSlot nosas = ctrl.GetSinActionSlot(sam);
+            NewOperationSinActionSlot? nosas = ctrl.GetSinActionSlot(sam);
+            if (nosas == null)
+            {
+                Logger.LogFatal("NOSAS NOT FOUND!");
+                return;
+            }
             
             for (int i = 0; i < 2; i++)
             slotDatas.Add((i, sam.currentSinList[i].GetSkill().GetSkillTier()));
@@ -224,55 +248,93 @@ public class EnvyPeccatulumPVP : BasePlugin
             nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER, true, null);
             else nosas._secondSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER, true, null);
         }
+        catch (Exception ex)
+        {
+            Logger.LogFatal(ex.Message);
+            Logger.LogFatal($"StackTrace: {ex.StackTrace}");
+        }
     }
 
     public static void ClearAllEffect(SinActionModel sam)
     {
         SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._firstSinSlot._effectManager._skillEffectList.Clear();
+        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._firstSinSlot._effectManager.SetActiveEffect(false);
         SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._secondSinSlot._effectManager._skillEffectList.Clear();
+        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._secondSinSlot._effectManager.SetActiveEffect(false);
     }
 
     public static void OnRoundStartSpecial(BattleUnitModel unit)
     {
-        switch (unit.GetUnitID())
+        Logger.LogFatal("OnRoundStartSpecial Ran!");
+        try
         {
-            case 2010010916: //The House of Spiders: The Thumb Nursefather Rodion
-                if (!_skillBagStates.ContainsKey(unit.Pointer)) return;
-                bool hasDisposal = false;
-                foreach (SkillBagState state in _skillBagStates[unit.Pointer])
-                {
-                    if (state.OnDashboardSkills.Contains(1091607)) 
+            switch (unit.GetUnitID())
+            {
+                case 2010010916: //The House of Spiders: The Thumb Nursefather Rodion
+                    Logger.LogFatal("The House of Spiders: The Thumb Nursefather Rodion OnRoundStartSpecial");
+                    if (!_skillBagStates.ContainsKey(unit.Pointer)) return;
+                    bool hasDisposal = false;
+                    foreach (SkillBagState state in _skillBagStates[unit.Pointer])
                     {
-                        hasDisposal = true;
-                        break;
+                        if (state.OnDashboardSkills.Contains(1091607)) 
+                        {
+                            hasDisposal = true;
+                            break;
+                        }
                     }
-                }
-                System.Collections.Generic.List<BattleUnitModel> playerList = [.. Singleton<SinManager>.Instance._battleObjectManager.GetAliveList(true, UNIT_FACTION.PLAYER)];
-                if (hasDisposal)
-                {
-                    playerList.Sort((x, y) => x.Hp.CompareTo(y.Hp));
-
-                    foreach(BattleUnitModel sinner in playerList) if (sinner._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0) return;
-
-                    Il2CppSystem.Collections.Generic.List<BuffHistory> buffHistories = new();
-                    buffHistories.Add(new BuffHistory(unit, 1, 0, ABILITY_SOURCE_TYPE.PASSIVE));
-
-                    playerList[0]._buffDetail.AddBuff(playerList[0], BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, buffHistories, 0, ABILITY_SOURCE_TYPE.PASSIVE, BATTLE_EVENT_TIMING.ON_START_ROUND, null, out int adderStack, out int adderTurn, out int overStack, out int overTurn);
-                }
-                else
-                {
-                    foreach(BattleUnitModel sinner in playerList)
+                    System.Collections.Generic.List<BattleUnitModel> playerList = [.. Singleton<SinManager>.Instance._battleObjectManager.GetAliveList(true, UNIT_FACTION.PLAYER)];
+                    if (hasDisposal)
                     {
-                        if (sinner._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0)
-                        sinner._buffDetail.ForceToDestroyBuff(sinner, BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false, 0, BATTLE_EVENT_TIMING.ON_START_ROUND);
+                        playerList.Sort((x, y) => x.Hp.CompareTo(y.Hp));
+
+                        foreach(BattleUnitModel sinner in playerList) if (sinner._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0) return;
+
+                        Il2CppSystem.Collections.Generic.List<BuffHistory> buffHistories = new();
+                        buffHistories.Add(new BuffHistory(unit, 1, 0, ABILITY_SOURCE_TYPE.PASSIVE));
+
+                        playerList[0]._buffDetail.AddBuff(playerList[0], BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, buffHistories, 0, ABILITY_SOURCE_TYPE.PASSIVE, BATTLE_EVENT_TIMING.ON_START_ROUND, null, out _, out _, out _, out _);
                     }
-                }
-                return;
-            case 2010010115: //The House of Spiders: The Index Nursefather Yi Sang
-                bool prioritizeSkill3 = unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_2, false) != 0 || unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_3, false) != 0;
-                ApplyIndexEffect(unit, prioritizeSkill3);
-                return;
-            default: return;
+                    else
+                    {
+                        foreach(BattleUnitModel sinner in playerList)
+                        {
+                            if (sinner._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false) != 0)
+                            sinner._buffDetail.ForceToDestroyBuff(sinner, BUFF_UNIQUE_KEYWORD.TeachersPreyRodion, false, 0, BATTLE_EVENT_TIMING.ON_START_ROUND);
+                        }
+                    }
+                    return;
+                default: return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFatal(ex.Message);
+            Logger.LogFatal($"StackTrace: {ex.StackTrace}");
+        }
+    }
+
+    public static void OnRoundStartOperation(BattleUnitModel unit, SinActionModel sam, int slotIdx)
+    {
+        Logger.LogFatal("OnRoundStartOperation Ran");
+        ClearAllEffect(sam);
+        try
+        {
+            switch (unit.GetUnitID())
+            {
+                case 2010010115: //The House of Spiders: The Index Nursefather Yi Sang
+                    Logger.LogFatal("The House of Spiders: The Index Nursefather Yi Sang OnRoundStartOperation");
+                    if (slotIdx != 0 && slotIdx != 1) return;
+                    Logger.LogFatal("Passed Check");
+                    bool prioritizeSkill3 = unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_2, false) != 0 || unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_3, false) != 0;
+                    ApplyIndexEffect(sam, prioritizeSkill3);
+                    return;
+                default: return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFatal(ex.Message);
+            Logger.LogFatal($"StackTrace: {ex.StackTrace}");
         }
     }
 
@@ -288,14 +350,36 @@ public class EnvyPeccatulumPVP : BasePlugin
         switch (unit.GetUnitID())
         {
             case 2010011115: //The House of Spiders: The Middle Nursefather Outis
-                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0) return true;
-                return false;
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0);
             case 2010010916: //The House of Spiders: The Thumb Nursefather Rodion
-                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.AccelBullet, false) == 0) return true;
-                return false;
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.AccelBullet, false) == 0);
             case 2010010215: //The House of Spiders: The Ring Apprentice Faust
-                if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.SilverOpportunity, false) != 0) return true;
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.SilverOpportunity, false) != 0);
+            case 2010010213: //Shi Assoc. East Section 3 Faust
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.ArrowShiFau, false) == 0);
+            case 2010011015: //The House of Spiders: The Pinky Apprentice Sinclair
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.Breath, false) > 24);
+            case 2010010312: //Lobotomy E.G.O::In the Name of Love and Hate Don Quixote
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.NoVillain, false) != 0);
+            case 2010010913: //Lobotomy E.G.O::The Sword Sharpened with Tears Rodion
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.DespairAlly, false) != 0);
+            case 2010010512: //The Thumb East Capo IIII Meursault
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.BulletPropellantSpecialAlly, false) != 0);
+            case 2010010611: //Full-Stop Office Rep Hong Lu
+                if (unit.IsPassiveActive(1061111))
+                {
+                    foreach (BattleUnitModel unit1 in SingletonBehavior<BattleObjectManager>.Instance.GetBackUnitList(UNIT_FACTION.PLAYER, false, 6))
+                    {
+                        if (unit1.GetUnitID() == 2010010711) return true;
+                    }
+                    foreach (BattleUnitModel unit2 in SingletonBehavior<BattleObjectManager>.Instance.GetAliveList(false, UNIT_FACTION.PLAYER))
+                    {
+                        if (unit2.GetUnitID() == 2010010711 && unit2.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.Retreat_FullStop, false) != 0) return true;
+                    }
+                }
                 return false;
+            case 2010010710: //Wild Hunt Heathcliff
+                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.NightPathfinding, false) != 0);
             default: return false;
         }
     }
@@ -378,8 +462,41 @@ public class EnvyPeccatulumPVP : BasePlugin
                     if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.StackYisangSpecialSkill, false) != 9) return;
                     if (unit._passiveDetail.IsPassiveActive(1011511))
                     {
-                        return;
+                        if (slotIdx != 0) return;
+                        if (state.OnDashboardSkills.Contains(1011505)) return;
+                        if (skillStaticDataList.GetData(state.OnDashboardSkills[0]).SkillType != SKILL_TYPE.SKILL)
+                        {
+                            if (state.OnDashboardSkills.Count > 1) state.OnDashboardSkills[1] = 1011505;
+                            else state.OnDashboardSkills.Add(1011505);
+                        } else state.OnDashboardSkills[0] = 1011505;
                     }
+                    else
+                    {
+                        List<SkillBagState> allBags = _skillBagStates[unit.Pointer];
+                        if (!state.OnDashboardSkills.Contains(1011503)) return;
+                        if (allBags.Any(bag => bag.OnDashboardSkills.Contains(1011505))) return;
+                        int skillIdx = state.OnDashboardSkills.FindIndex(s => s == 1011503);
+                        state.OnDashboardSkills[skillIdx] = 1011505;
+                    }
+                    return;
+                case 2010010213: //Shi Assoc. East Section 3 Faust
+                    if (slotIdx != 0) return; //
+                    if (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.AimForTheGoal, false) != 4) return;
+                    // List<SkillBagState> allBags2 = _skillBagStates[unit.Pointer];
+                    // if (allBags2.Any(bag => bag.OnDashboardSkills.Contains(1021305))) return;
+                    // if (!state.OnDashboardSkills.Contains(1021303))
+                    // {
+                    //     ShiAssocEastSection3Faust_ActivatedNoS3 = true;
+                    //     return;
+                    // }
+                    // int skillIdx2 = state.OnDashboardSkills.FindIndex(s => s == 1021303);
+                    // state.OnDashboardSkills[skillIdx2] = 1021305;
+                    // ShiAssocEastSection3Faust_ActivatedNoS3 = false;
+                    if (skillStaticDataList.GetData(state.OnDashboardSkills[0]).SkillType != SKILL_TYPE.SKILL)
+                    {
+                        if (state.OnDashboardSkills.Count > 1) state.OnDashboardSkills[1] = 1021305;
+                        else state.OnDashboardSkills.Add(1021305);
+                    } else state.OnDashboardSkills[0] = 1021305;
                     return;
                 default: return;
             }
@@ -421,8 +538,18 @@ public class EnvyPeccatulumPVP : BasePlugin
     {
         switch (unit.GetUnitID())
         {
-            case 2010010215:
+            case 2010010215: //The House of Spiders: The Ring Apprentice Faust
                 return CheckConditionsUpgrade(unit) ? 1071605 : 1071604;
+            case 2010010213: //Shi Assoc. East Section 3 Faust
+                return CheckConditionsUpgrade(unit) ? 1021306 : 1021304;
+            case 2010011015: //The House of Spiders: The Pinky Apprentice Sinclair
+                return CheckConditionsUpgrade(unit) ? 1101505 : 1101504;
+            case 2010010913: //Lobotomy E.G.O::The Sword Sharpened with Tears Rodion
+                return CheckConditionsUpgrade(unit) ? 1091308 : 1091304;
+            case 2010010611: //Full-Stop Office Rep Hong Lu
+                return unit.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.Bullet, false) == 0 ? 1061107 : 1061104;
+            case 2010010711: //Full-Stop Office Fixer Heathcliff
+                return unit.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.Bullet, false) == 0 ? 1071106 : 1071104;
             default: return defaultID;
         }
     }
@@ -485,14 +612,6 @@ public class EnvyPeccatulumPVP : BasePlugin
         sam.currentSinList.Clear();
 
         foreach (int skillId in state.OnDashboardSkills) sam.currentSinList.Add(new UnitSinModel(skillId, unit, sam));
-    }
-
-    public class SkillBagState
-    {
-        public List<int> SkillBag = new();
-        public List<int> OnDashboardSkills = new();
-        public int? SkillIdUsedLastTurn = null;
-        public int? indexLastTurn = null;
     }
 
     public class EgoSelectionUI : MonoBehaviour
@@ -843,13 +962,42 @@ internal static class EnemyCtrlPatches
 
                 EnvyPeccatulumPVP.RecheckSkillBag(sam.UnitModel, sam, slotCounter[unitPtr]);
                 slotCounter[unitPtr]++;
-
                 sinActionList.Add(sam);
                 _injectedEnemies.Add(sam.Pointer);
-            }
+            }            
         }
         catch { }
     }
+    [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
+    [HarmonyPostfix]
+
+    static void Postfix_NewOperationController_SetData(NewOperationController __instance, ref Il2CppList sinActionList, bool isRoundStart)
+    {
+        if (!_cmdOpen) return;
+        if (!isRoundStart) return;
+        try
+        {
+            var sinMgr = Singleton<SinManager>.Instance;
+            if (sinMgr == null) return;
+
+            Il2CppList enemies = sinMgr.GetActionListByFaction(UNIT_FACTION.ENEMY);
+            if (enemies == null || enemies.Count == 0) return;
+
+            Dictionary<IntPtr, int> slotCounter = new();
+            foreach(SinActionModel sam in enemies)
+            {
+                IntPtr unitPtr = sam.UnitModel.Pointer;
+                if (!slotCounter.ContainsKey(unitPtr)) slotCounter[unitPtr] = 0;
+                EnvyPeccatulumPVP.OnRoundStartOperation(sam.UnitModel, sam, slotCounter[unitPtr]);
+                slotCounter[unitPtr]++;
+            }
+        }
+        catch (Exception ex)
+        {
+            EnvyPeccatulumPVP.Logger.LogFatal($"{ex.Message}; {ex.StackTrace}");
+        }
+    }
+
 
     static void EnsureUiSlots(NewOperationController ctrl, int needed)
     {
@@ -1343,10 +1491,10 @@ internal static class EnemyCtrlPatches
     [HarmonyPostfix]
     static void AttachTargetTriggers(BattleUnitModel __instance)
     {
-        EnvyPeccatulumPVP.OnRoundStartSpecial(__instance);
         if (!__instance.IsFaction(UNIT_FACTION.PLAYER)) return;
         try
         {
+            EnvyPeccatulumPVP.OnRoundStartSpecial(__instance);
             var objMgr = SingletonBehavior<BattleObjectManager>.Instance;
             if (objMgr == null) return;
             var view = objMgr.GetView(__instance);
