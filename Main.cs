@@ -13,6 +13,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using BepInEx.Logging;
 using UnityEngine.UI;
+using BepInEx.Configuration;
 using TMPro;
 using Il2CppInterop.Runtime.Injection;
 using Il2CppList = Il2CppSystem.Collections.Generic.List<SinActionModel>;
@@ -44,6 +45,7 @@ public class EnvyPeccatulumPVP : BasePlugin
     public static EnvyPeccatulumPVP Instance = null!;
     public static ManualLogSource Logger = null!;
     public static Harmony harmony = null!;
+    public static readonly string configPath = Path.Join(Paths.PluginPath, "EnvyPeccatulumPVP.json");
 
     public class SkillBagState
     {
@@ -53,18 +55,25 @@ public class EnvyPeccatulumPVP : BasePlugin
         public int? indexLastTurn = null;
     }
 
-    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
+    public class SPBackUp
+    {
+        public List<int> SpValue {get; set;} = new() {
+            0, 0, 0, 0, 0, 0,
+            10, 15, 20, 20, 30, 30};
+    }
+    public static int _currentEnvyPeccIndex = 1;
 
+    public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
     public static Dictionary<IntPtr, List<SkillBagState>> _skillBagStates = new();
     public static Dictionary<IntPtr, SkillBagState> _currentTurnSamSkillBag = new();
 
     public static Dictionary<ATTRIBUTE_TYPE, int> _egoStockDict = attribute_types.ToDictionary(key => key, _ => 0);
     public static Dictionary<IntPtr, Dictionary<ATTRIBUTE_TYPE, int>> _reservedEgoStock = new();
-
     public static Dictionary<ATTRIBUTE_TYPE, Texture2D> _sinTexture2d = new();
-
     public static Dictionary<int, List<(int, int)>> _skillUpgradeList = new();
     public static Dictionary<int, int> _specialSkillUpgradeCounter = new();
+    public static SPBackUp SpBackUp = new SPBackUp();
+    // public static List<NewOperationSinActionSlot> _appliedEffectOldSAS = new();
 
     //The House of Spiders: The Thumb Nursefather Rodion
     public static bool TheHouseOfSpidersTheThumbNursefatherRodion_CheckEye = false;
@@ -129,6 +138,17 @@ public class EnvyPeccatulumPVP : BasePlugin
                 catch { }
             }
         }
+
+        if (!File.Exists(configPath))
+        File.WriteAllText(configPath, JsonSerializer.Serialize(SpBackUp, new JsonSerializerOptions{WriteIndented = true}));
+
+        var options = new JsonSerializerOptions {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        };
+
+        SpBackUp = JsonSerializer.Deserialize<SPBackUp>(File.ReadAllText(configPath), options) ?? new SPBackUp();
     }
 
     private static Exception? AppearanceGuardFinalizer(Exception? __exception) => null;
@@ -216,6 +236,18 @@ public class EnvyPeccatulumPVP : BasePlugin
                     nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
                 }
                 return;
+            case 2010011216: //Dawn Office Rep Gregor
+                if (skillId != 1121604) return;
+                if (target.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.StigmaWorkshopHandStep1, false) != 30) return;
+                if (nosas.FirstSinSlot.SinAction == unitSam) nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
+                else nosas._secondSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
+                return;
+            case 2010010216: //Dawn Office Fixer Faust
+                if (skillId != 1121604) return;
+                if (target.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.StigmaWorkshopCelloCaseOne, false) != 30) return;
+                if (nosas.FirstSinSlot.SinAction == unitSam) nosas._firstSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
+                else nosas._secondSinSlot._effectManager.SetActiveEffect_OneType(OPERATION_SKILL_EFFECT_TYPE.RING_FAVUISM_TEST, true, null);
+                return;
             default: return;
         }
     }
@@ -232,6 +264,7 @@ public class EnvyPeccatulumPVP : BasePlugin
                 Logger.LogFatal("NOSAS NOT FOUND!");
                 return;
             }
+            // _appliedEffectOldSAS.Add(nosas);
             
             for (int i = 0; i < 2; i++)
             slotDatas.Add((i, sam.currentSinList[i].GetSkill().GetSkillTier()));
@@ -257,10 +290,8 @@ public class EnvyPeccatulumPVP : BasePlugin
 
     public static void ClearAllEffect(SinActionModel sam)
     {
-        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._firstSinSlot._effectManager._skillEffectList.Clear();
-        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._firstSinSlot._effectManager.SetActiveEffect(false);
-        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._secondSinSlot._effectManager._skillEffectList.Clear();
-        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController.GetSinActionSlot(sam)._secondSinSlot._effectManager.SetActiveEffect(false);
+        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController?.GetSinActionSlot(sam)?._firstSinSlot?._effectManager?._skillEffectList?.Clear();
+        SingletonBehavior<BattleUIRoot>.Instance?.NewOperationController?.GetSinActionSlot(sam)?._secondSinSlot?._effectManager?._skillEffectList?.Clear();
     }
 
     public static void OnRoundStartSpecial(BattleUnitModel unit)
@@ -316,18 +347,17 @@ public class EnvyPeccatulumPVP : BasePlugin
     public static void OnRoundStartOperation(BattleUnitModel unit, SinActionModel sam, int slotIdx)
     {
         Logger.LogFatal("OnRoundStartOperation Ran");
-        ClearAllEffect(sam);
         try
         {
             switch (unit.GetUnitID())
             {
-                case 2010010115: //The House of Spiders: The Index Nursefather Yi Sang
-                    Logger.LogFatal("The House of Spiders: The Index Nursefather Yi Sang OnRoundStartOperation");
-                    if (slotIdx != 0 && slotIdx != 1) return;
-                    Logger.LogFatal("Passed Check");
-                    bool prioritizeSkill3 = unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_2, false) != 0 || unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_3, false) != 0;
-                    ApplyIndexEffect(sam, prioritizeSkill3);
-                    return;
+                // case 2010010115: //The House of Spiders: The Index Nursefather Yi Sang
+                //     Logger.LogFatal("The House of Spiders: The Index Nursefather Yi Sang OnRoundStartOperation");
+                //     if (slotIdx != 0 && slotIdx != 1) return;
+                //     Logger.LogFatal("Passed Check");
+                //     bool prioritizeSkill3 = unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_2, false) != 0 || unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.UnlockBuffAlly_3, false) != 0;
+                //     ApplyIndexEffect(sam, prioritizeSkill3);
+                //     return;
                 default: return;
             }
         }
@@ -928,6 +958,8 @@ internal static class EnemyCtrlPatches
         EnvyPeccatulumPVP._currentTurnSamSkillBag.Clear();
         EnvyPeccatulumPVP._specialSkillUpgradeCounter.Clear();
         EnvyPeccatulumPVP.ResetCustomVariables();
+        EnvyPeccatulumPVP.SpBackUp = new();
+        EnvyPeccatulumPVP._currentEnvyPeccIndex = 1;
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -968,6 +1000,7 @@ internal static class EnemyCtrlPatches
         }
         catch { }
     }
+
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
     [HarmonyPostfix]
 
@@ -976,7 +1009,28 @@ internal static class EnemyCtrlPatches
         if (!_cmdOpen) return;
         if (!isRoundStart) return;
         try
-        {
+        {   
+            // var root = SingletonBehavior<BattleUIRoot>.Instance;
+            // if (root == null) return;
+            // var ctrl = root.NewOperationController;
+            // if (ctrl == null || ctrl._sinActionSlotList == null) return;
+
+            // foreach(NewOperationSinActionSlot nosas in ctrl._sinActionSlotList)
+            // {
+            //     SinActionModel sam = nosas._sinAction;
+            //     if (sam == null) continue;
+            //     if (!IsEnemy(sam)) continue;
+            //     nosas._firstSinSlot._effectManager._skillEffectList.Clear();
+            //     nosas._secondSinSlot._effectManager._skillEffectList.Clear();
+            // }
+
+            // foreach (NewOperationSinActionSlot nosas in EnvyPeccatulumPVP._appliedEffectOldSAS)
+            // {
+            //     nosas._firstSinSlot._effectManager._skillEffectList.Clear();
+            //     nosas._secondSinSlot._effectManager._skillEffectList.Clear();
+            // }
+            // EnvyPeccatulumPVP._appliedEffectOldSAS.Clear();
+
             var sinMgr = Singleton<SinManager>.Instance;
             if (sinMgr == null) return;
 
@@ -1357,7 +1411,6 @@ internal static class EnemyCtrlPatches
     [HarmonyPrefix]
     static void ApplyTargets()
     {
-
         _cmdOpen = false;
         if (_targets.Count == 0) return;
 
@@ -1494,7 +1547,6 @@ internal static class EnemyCtrlPatches
         if (!__instance.IsFaction(UNIT_FACTION.PLAYER)) return;
         try
         {
-            EnvyPeccatulumPVP.OnRoundStartSpecial(__instance);
             var objMgr = SingletonBehavior<BattleObjectManager>.Instance;
             if (objMgr == null) return;
             var view = objMgr.GetView(__instance);
@@ -1960,7 +2012,7 @@ internal static class EnemyCtrlPatches
         catch { }
     }
 
-    static bool IsEnemy(SinActionModel? sam)
+    public static bool IsEnemy(SinActionModel? sam)
     {
         if (sam == null || sam.Pointer == IntPtr.Zero) return false;
         try { return sam.GetFaction() == UNIT_FACTION.ENEMY; }

@@ -73,20 +73,19 @@ internal static class GimmickPatches
 	// public static void Mental_Postfix_PassiveDetail_OnLoseDuel(BattleActionModel selfAction, BattleActionModel oppoAction, BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
 	// {
     //     __instance._owner.HealTargetMp(__instance._owner, -3, ABILITY_SOURCE_TYPE.UNIT, timing);
-    // }
-
-    // //Sub Units SP Gain
-    // [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnAddUnit_After))]
-	// [HarmonyPostfix]
-	// public static void Mental_Postfix_PassiveDetail_OnAddUnit_After(BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
-	// {
-    //     if (__instance._owner._participateOrder > 10)
-    //     {__instance._owner._changeStat.SetMp(15, out int _);}
-    //     else if (__instance._owner._participateOrder > 8)
-    //     {__instance._owner._changeStat.SetMp(10, out int _);}
-    //     else if (__instance._owner._participateOrder > 6)
-    //     {__instance._owner._changeStat.SetMp(5, out int _);}
-    // }
+    // }    
+    // Sub Units SP Gain
+    [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnAddUnit_After))]
+	[HarmonyPostfix]
+	public static void Mental_Postfix_PassiveDetail_OnAddUnit_After(BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
+	{
+        if (__instance._owner.IsAbnormalityOrPart)
+        {
+            __instance._owner._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[EnvyPeccatulumPVP._currentEnvyPeccIndex - 1], out int _);
+            EnvyPeccatulumPVP._currentEnvyPeccIndex++;
+        }
+        else __instance._owner._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[__instance._owner._participateOrder - 1], out int _);
+    }
 
     //The House of Spiders: The Thumb Nursefather Rodion
     [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnKillTarget))]
@@ -124,50 +123,50 @@ internal static class GimmickPatches
     }
 
     //The Index
-    [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnStartTurn_BeforeLog))]
-	[HarmonyPostfix]
-	public static void Postfix_PassiveDetail_OnStartTurn_BeforeLog(BattleActionModel action, BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
-	{
-        if (action == null || action.Skill == null) return;
-        SinActionModel sam = action._sinAction;
-        NewOperationController ctrl = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
-        NewOperationSinActionSlot nosas = ctrl.GetSinActionSlot(action._sinAction);
-        NewOperationSinSlot? noss = null;
-        if (nosas.FirstSinSlot.SinAction == sam) noss = nosas.FirstSinSlot;
-        if (nosas.SecondSinSlot.SinAction == sam) noss = nosas.SecondSinSlot;
-        switch (action.Model.GetUnitID())
-        {
-            case 2010010115: //The House of Spiders: The Index Nursefather Yi Sang
-                switch (EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_CurrentUnlockRank)
-                {
-                    case 0:
-                        if (action.GetMainTarget()._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.IndexPrescriptTargetToEnemy, false) != 0)
-                        {
-                            EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = true;
-                            EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_ExecutedOnPrescriptTarget = true;
-                            return;
-                        }
-                        if (noss == null) return;
+    // [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnStartTurn_BeforeLog))]
+	// [HarmonyPostfix]
+	// public static void Postfix_PassiveDetail_OnStartTurn_BeforeLog(BattleActionModel action, BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
+	// {
+    //     if (action == null || action.Skill == null) return;
+    //     SinActionModel sam = action._sinAction;
+    //     NewOperationController ctrl = SingletonBehavior<BattleUIRoot>.Instance.NewOperationController;
+    //     NewOperationSinActionSlot nosas = ctrl.GetSinActionSlot(action._sinAction);
+    //     NewOperationSinSlot? noss = null;
+    //     if (nosas.FirstSinSlot.SinAction == sam) noss = nosas.FirstSinSlot;
+    //     if (nosas.SecondSinSlot.SinAction == sam) noss = nosas.SecondSinSlot;
+    //     switch (action.Model.GetUnitID())
+    //     {
+    //         case 2010010115: //The House of Spiders: The Index Nursefather Yi Sang
+    //             switch (EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_CurrentUnlockRank)
+    //             {
+    //                 case 0:
+    //                     if (action.GetMainTarget()._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.IndexPrescriptTargetToEnemy, false) != 0)
+    //                     {
+    //                         EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = true;
+    //                         EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_ExecutedOnPrescriptTarget = true;
+    //                         return;
+    //                     }
+    //                     if (noss == null) return;
 
-                        if (noss._effectManager._skillEffectList.ContainsKey(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER))
-                        EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = true;
+    //                     if (noss._effectManager._skillEffectList.ContainsKey(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER))
+    //                     EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = true;
 
-                        return;
-                    case 1:
-                        if (noss == null) return;
+    //                     return;
+    //                 case 1:
+    //                     if (noss == null) return;
 
-                        if (action.GetMainTarget()._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.IndexPrescriptTargetToEnemy, false) != 0)
-                        EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_ExecutedOnPrescriptTarget = true;
+    //                     if (action.GetMainTarget()._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.IndexPrescriptTargetToEnemy, false) != 0)
+    //                     EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_ExecutedOnPrescriptTarget = true;
 
-                        if (noss._effectManager._skillEffectList.ContainsKey(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER))
-                        EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = true;
+    //                     if (noss._effectManager._skillEffectList.ContainsKey(OPERATION_SKILL_EFFECT_TYPE.INDEX_FINGER))
+    //                     EnvyPeccatulumPVP.TheHouseOfSpidersTheIndexNursefatherYiSang_PrescriptExecuted = true;
 
-                        return;
-                    default: return;
-                }
-            default: return;
-        }
-	}
+    //                     return;
+    //                 default: return;
+    //             }
+    //         default: return;
+    //     }
+	// }
 
     public static List<BUFF_UNIQUE_KEYWORD> prescriptList = new List<BUFF_UNIQUE_KEYWORD> {BUFF_UNIQUE_KEYWORD.IndexPrescriptYi_1, BUFF_UNIQUE_KEYWORD.IndexPrescriptYi_2, BUFF_UNIQUE_KEYWORD.IndexPrescriptYi_3};
     //The House of Spiders: The Index Nursefather Yi Sang
