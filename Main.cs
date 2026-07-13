@@ -73,6 +73,7 @@ public class EnvyPeccatulumPVP : BasePlugin
     public static Dictionary<int, List<(int, int)>> _skillUpgradeList = new();
     public static Dictionary<int, int> _specialSkillUpgradeCounter = new();
     public static SPBackUp SpBackUp = new SPBackUp();
+    public static List<int> SpGainedUnitIds = new();
     // public static List<NewOperationSinActionSlot> _appliedEffectOldSAS = new();
 
     //The House of Spiders: The Thumb Nursefather Rodion
@@ -960,6 +961,7 @@ internal static class EnemyCtrlPatches
         EnvyPeccatulumPVP.ResetCustomVariables();
         EnvyPeccatulumPVP.SpBackUp = new();
         EnvyPeccatulumPVP._currentEnvyPeccIndex = 1;
+        EnvyPeccatulumPVP.SpGainedUnitIds = new();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]

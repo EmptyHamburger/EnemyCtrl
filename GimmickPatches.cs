@@ -79,12 +79,14 @@ internal static class GimmickPatches
 	[HarmonyPostfix]
 	public static void Mental_Postfix_PassiveDetail_OnAddUnit_After(BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
 	{
+        if (EnvyPeccatulumPVP.SpGainedUnitIds.Contains(__instance._owner.GetUnitID())) return;
         if (__instance._owner.IsAbnormalityOrPart)
         {
             __instance._owner._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[EnvyPeccatulumPVP._currentEnvyPeccIndex - 1], out int _);
             EnvyPeccatulumPVP._currentEnvyPeccIndex++;
         }
         else __instance._owner._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[__instance._owner._participateOrder - 1], out int _);
+        EnvyPeccatulumPVP.SpGainedUnitIds.Add(__instance._owner.GetUnitID());
     }
 
     //The House of Spiders: The Thumb Nursefather Rodion
