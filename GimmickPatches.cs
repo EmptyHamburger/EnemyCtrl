@@ -75,20 +75,42 @@ internal static class GimmickPatches
     //     __instance._owner.HealTargetMp(__instance._owner, -3, ABILITY_SOURCE_TYPE.UNIT, timing);
     // }    
     // Sub Units SP Gain
-    [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnAddUnit_After))]
+    [HarmonyPatch(typeof(BattleUnitModel), nameof(BattleUnitModel.OnAddUnit_After))]
 	[HarmonyPostfix]
-	public static void Mental_Postfix_PassiveDetail_OnAddUnit_After(BATTLE_EVENT_TIMING timing, PassiveDetail __instance)
+	public static void Mental_Postfix_PassiveDetail_OnAddUnit_After(BATTLE_EVENT_TIMING timing, BattleUnitModel __instance)
 	{
-        if (EnvyPeccatulumPVP.SpGainedUnitIds.Contains(__instance._owner.GetUnitID())) return;
-        if (__instance._owner.IsAbnormalityOrPart)
-        {
-            __instance._owner._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[EnvyPeccatulumPVP._currentEnvyPeccIndex - 1], out int _);
-            EnvyPeccatulumPVP._currentEnvyPeccIndex++;
-        }
-        else __instance._owner._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[__instance._owner._participateOrder - 1], out int _);
-        EnvyPeccatulumPVP.SpGainedUnitIds.Add(__instance._owner.GetUnitID());
+        // if (EnvyPeccatulumPVP.SpGainedUnitIds.Contains(__instance.GetUnitID())) return;
+        // if (__instance.IsAbnormalityOrPart)
+        // {
+        //     __instance._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[EnvyPeccatulumPVP._currentEnvyPeccIndex - 1], out int _);
+        //     EnvyPeccatulumPVP._currentEnvyPeccIndex++;
+        // }
+        // else __instance._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[__instance._participateOrder - 1], out int _);
+
+        // EnvyPeccatulumPVP.SpGainedUnitIds.Add(__instance.GetUnitID());
+        EnvyPeccatulumPVP._pendingSubInstID.Add(__instance.InstanceID);
     }
 
+    [HarmonyPatch(typeof(StageController), nameof(StageController.FixedUpdate))]
+    [HarmonyPrefix]
+    private static void Prefix_StageController_FixedUpdate(StageController __instance)
+    {
+        if (__instance._phase != STAGE_PHASE.WAIT_COMMAND_BEFORE) return;
+        foreach(int instID in EnvyPeccatulumPVP._pendingSubInstID)
+        {
+            BattleUnitModel unit = SingletonBehavior<BattleObjectManager>.Instance.GetModel(instID);
+            if (EnvyPeccatulumPVP.SpGainedUnitIds.Contains(unit.GetUnitID())) continue;
+            if (unit.IsAbnormalityOrPart)
+            {
+                unit._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[EnvyPeccatulumPVP._currentEnvyPeccIndex - 1], out int _);
+                EnvyPeccatulumPVP._currentEnvyPeccIndex++;
+            }
+            else unit._changeStat.SetMp(EnvyPeccatulumPVP.SpBackUp.SpValue[unit._participateOrder - 1], out int _);
+
+            EnvyPeccatulumPVP.SpGainedUnitIds.Add(unit.GetUnitID());
+        }
+        EnvyPeccatulumPVP._pendingSubInstID.Clear();
+    }
     //The House of Spiders: The Thumb Nursefather Rodion
     [HarmonyPatch(typeof(PassiveDetail), nameof(PassiveDetail.OnKillTarget))]
 	[HarmonyPostfix]

@@ -62,7 +62,7 @@ public class EnvyPeccatulumPVP : BasePlugin
             10, 15, 20, 20, 30, 30};
     }
     public static int _currentEnvyPeccIndex = 1;
-
+    public static List<int> _pendingSubInstID = new();
     public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
     public static Dictionary<IntPtr, List<SkillBagState>> _skillBagStates = new();
     public static Dictionary<IntPtr, SkillBagState> _currentTurnSamSkillBag = new();
@@ -961,7 +961,8 @@ internal static class EnemyCtrlPatches
         EnvyPeccatulumPVP.ResetCustomVariables();
         EnvyPeccatulumPVP.SpBackUp = new();
         EnvyPeccatulumPVP._currentEnvyPeccIndex = 1;
-        EnvyPeccatulumPVP.SpGainedUnitIds = new();
+        EnvyPeccatulumPVP.SpGainedUnitIds.Clear();
+        EnvyPeccatulumPVP._pendingSubInstID.Clear();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
