@@ -26,8 +26,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Unity.Collections;
-using EnvyPeccatulumPVP.Patches;
 using System.Diagnostics;
+using EnvyPeccatulumPVP;
 
 namespace EnvyPeccatulumPVP;
 
@@ -55,14 +55,27 @@ public class EnvyPeccatulumPVP : BasePlugin
         public int? indexLastTurn = null;
     }
 
-    public class SPBackUp
+    public class ConfigPVP
     {
+        public bool Active {get; set;} = false;
         public List<int> SpValue {get; set;} = new() {
             0, 0, 0, 0, 0, 0,
             10, 15, 20, 20, 30, 30};
+        public int ClashWin {get; set;} = 5;
+        public int ClashWinMultiplier {get; set;} = 0;
+        public int ClashLose {get; set;} = -5;
+        public int ClashLoseToLowerSPEnemy {get; set;} = -5;
+        public int Unopposed {get; set;} = 3;
+        public int AllyKilled {get; set;} = 10;
+        public int EnemyKilled {get; set;} = 10;
+        public int EnemyKilledByAlly {get; set;} = 5;
+        public int GateSPMin {get; set;} = -45;
+        public int GateSPMax {get; set;} = 45;
     }
     public static int _currentEnvyPeccIndex = 1;
     public static List<int> _pendingSubInstID = new();
+    public static List<IntPtr> _doneMental = new();
+    public static Dictionary<IntPtr, int> _unopposedDict = new();
     public static readonly List<ATTRIBUTE_TYPE> attribute_types = new List<ATTRIBUTE_TYPE> { ATTRIBUTE_TYPE.CRIMSON, ATTRIBUTE_TYPE.SCARLET, ATTRIBUTE_TYPE.AMBER, ATTRIBUTE_TYPE.SHAMROCK, ATTRIBUTE_TYPE.AZURE, ATTRIBUTE_TYPE.INDIGO, ATTRIBUTE_TYPE.VIOLET };
     public static Dictionary<IntPtr, List<SkillBagState>> _skillBagStates = new();
     public static Dictionary<IntPtr, SkillBagState> _currentTurnSamSkillBag = new();
@@ -72,7 +85,7 @@ public class EnvyPeccatulumPVP : BasePlugin
     public static Dictionary<ATTRIBUTE_TYPE, Texture2D> _sinTexture2d = new();
     public static Dictionary<int, List<(int, int)>> _skillUpgradeList = new();
     public static Dictionary<int, int> _specialSkillUpgradeCounter = new();
-    public static SPBackUp SpBackUp = new SPBackUp();
+    public static ConfigPVP ConfigCustom = new ConfigPVP();
     public static List<int> SpGainedUnitIds = new();
     // public static List<NewOperationSinActionSlot> _appliedEffectOldSAS = new();
 
@@ -141,7 +154,7 @@ public class EnvyPeccatulumPVP : BasePlugin
         }
 
         if (!File.Exists(configPath))
-        File.WriteAllText(configPath, JsonSerializer.Serialize(SpBackUp, new JsonSerializerOptions{WriteIndented = true}));
+        File.WriteAllText(configPath, JsonSerializer.Serialize(ConfigCustom, new JsonSerializerOptions{WriteIndented = true}));
 
         var options = new JsonSerializerOptions {
             PropertyNameCaseInsensitive = true,
@@ -149,7 +162,7 @@ public class EnvyPeccatulumPVP : BasePlugin
             AllowTrailingCommas = true
         };
 
-        SpBackUp = JsonSerializer.Deserialize<SPBackUp>(File.ReadAllText(configPath), options) ?? new SPBackUp();
+        ConfigCustom = JsonSerializer.Deserialize<ConfigPVP>(File.ReadAllText(configPath), options) ?? new ConfigPVP();
     }
 
     private static Exception? AppearanceGuardFinalizer(Exception? __exception) => null;
@@ -381,21 +394,21 @@ public class EnvyPeccatulumPVP : BasePlugin
         switch (unit.GetUnitID())
         {
             case 2010011115: //The House of Spiders: The Middle Nursefather Outis
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.MiddleFatherSwordFourOutis, false) != 0;
             case 2010010916: //The House of Spiders: The Thumb Nursefather Rodion
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.AccelBullet, false) == 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.AccelBullet, false) == 0;
             case 2010010215: //The House of Spiders: The Ring Apprentice Faust
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.SilverOpportunity, false) != 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.SilverOpportunity, false) != 0;
             case 2010010213: //Shi Assoc. East Section 3 Faust
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.ArrowShiFau, false) == 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.ArrowShiFau, false) == 0;
             case 2010011015: //The House of Spiders: The Pinky Apprentice Sinclair
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.Breath, false) > 24);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.Breath, false) > 24;
             case 2010010312: //Lobotomy E.G.O::In the Name of Love and Hate Don Quixote
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.NoVillain, false) != 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.NoVillain, false) != 0;
             case 2010010913: //Lobotomy E.G.O::The Sword Sharpened with Tears Rodion
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.DespairAlly, false) != 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.DespairAlly, false) != 0;
             case 2010010512: //The Thumb East Capo IIII Meursault
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.BulletPropellantSpecialAlly, false) != 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.BulletPropellantSpecialAlly, false) != 0;
             case 2010010611: //Full-Stop Office Rep Hong Lu
                 if (unit.IsPassiveActive(1061111))
                 {
@@ -410,7 +423,7 @@ public class EnvyPeccatulumPVP : BasePlugin
                 }
                 return false;
             case 2010010710: //Wild Hunt Heathcliff
-                return (unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.NightPathfinding, false) != 0);
+                return unit._buffDetail.GetActivatedBuffStack(BUFF_UNIQUE_KEYWORD.NightPathfinding, false) != 0;
             default: return false;
         }
     }
@@ -932,6 +945,7 @@ internal static class EnemyCtrlPatches
 
         EnvyPeccatulumPVP.SyncEgoStockToGame();
         EnvyPeccatulumPVP._currentTurnSamSkillBag.Clear();
+        EnvyPeccatulumPVP._unopposedDict.Clear();
     }
 
     [HarmonyPatch(typeof(StageModel), nameof(StageModel.Init))]
@@ -959,10 +973,11 @@ internal static class EnemyCtrlPatches
         EnvyPeccatulumPVP._currentTurnSamSkillBag.Clear();
         EnvyPeccatulumPVP._specialSkillUpgradeCounter.Clear();
         EnvyPeccatulumPVP.ResetCustomVariables();
-        EnvyPeccatulumPVP.SpBackUp = new();
         EnvyPeccatulumPVP._currentEnvyPeccIndex = 1;
         EnvyPeccatulumPVP.SpGainedUnitIds.Clear();
         EnvyPeccatulumPVP._pendingSubInstID.Clear();
+        EnvyPeccatulumPVP._doneMental.Clear();
+        EnvyPeccatulumPVP._unopposedDict.Clear();
     }
 
     [HarmonyPatch(typeof(NewOperationController), nameof(NewOperationController.SetData))]
@@ -1172,19 +1187,29 @@ internal static class EnemyCtrlPatches
     [HarmonyPostfix]
     static void SinnerDeSelected(SinActionModel __instance)
     {
-        if (!_cmdOpen || __instance == null || IsEnemy(__instance)) return;
+        if (!_cmdOpen || __instance == null) return;
         try
         {
             bool removed = false;
-            foreach (var key in new List<IntPtr>(_duelIntent.Keys))
+            if (IsEnemy(__instance))
             {
-                if (_duelIntent.TryGetValue(key, out var intent) &&
-                    intent.playerSam?.Pointer == __instance.Pointer)
+                if (_targets.Remove(__instance.Pointer)) removed = true;
+                _enemyTargetList.Remove(__instance.Pointer);
+                if (_duelIntent.Remove(__instance.Pointer)) removed = true;
+            }
+            else
+            {
+                foreach (var key in new List<IntPtr>(_duelIntent.Keys))
                 {
-                    _duelIntent.Remove(key);
-                    removed = true;
+                    if (_duelIntent.TryGetValue(key, out var intent) &&
+                        intent.playerSam?.Pointer == __instance.Pointer)
+                    {
+                        _duelIntent.Remove(key);
+                        removed = true;
+                    }
                 }
             }
+
             if (removed)
                 try { SingletonBehavior<BattleUIRoot>.Instance?.ShowAllCharacterTargetArrows(); } catch { }
             
@@ -1412,9 +1437,17 @@ internal static class EnemyCtrlPatches
     [HarmonyPatch(typeof(BattleActionModelManager), nameof(BattleActionModelManager.Run),
         new Type[] { })]
     [HarmonyPrefix]
-    static void ApplyTargets()
+    static void ApplyTargets_Prefix()
     {
         _cmdOpen = false;
+    }
+
+    [HarmonyPatch(typeof(BattleActionModelManager), nameof(BattleActionModelManager.Run),
+        new Type[] { })]
+    [HarmonyPostfix]
+    static void ApplyTargets_Postfix()
+    {
+        // _cmdOpen = false;
         if (_targets.Count == 0) return;
 
         try
@@ -1475,6 +1508,12 @@ internal static class EnemyCtrlPatches
                     if (playerAction == null) continue;
                     if (dueledPlayers.Contains(playerAction.Pointer)) continue;
                     if (dueledEnemies.Contains(enemyAction.Pointer)) continue;
+
+                    if (dueledPlayers.Contains(playerAction.Pointer) || dueledEnemies.Contains(enemyAction.Pointer))
+                    {
+                        actionMgr.RemoveDuel(enemyAction);
+                        continue;
+                    }
 
                     try { playerAction.ChangeMainTargetSinAction(sam, enemyAction, true); } catch { }
                     try { enemyAction.ChangeMainTargetSinAction(duelPartner, playerAction, true); } catch { }
@@ -1787,16 +1826,23 @@ internal static class EnemyCtrlPatches
     static void CancelDrag()
     {
         if (_drag == null) return;
+        var dragSam = _drag;
         var unitSin = _dragSin ?? (_drag.currentSinList?.Count > 0 ? _drag.currentSinList[0] : null);
         _drag = null;
         _dragSin = null;
         _hoverSam = null;
+
+        _targets.Remove(dragSam.Pointer);
+        _enemyTargetList.Remove(dragSam.Pointer);
+        _duelIntent.Remove(dragSam.Pointer);
+
         ClearCustomArrows();
         try
         {
             var root = SingletonBehavior<BattleUIRoot>.Instance;
             var ctrl = root?.NewOperationController;
             if (unitSin != null) ctrl?.EndDrag(unitSin);
+            try {dragSam.DeSelectSin();} catch {}
             root?.ShowAllCharacterTargetArrows();
             ctrl?.UpdateAllSlotForNormal();
         }
