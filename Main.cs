@@ -35,7 +35,7 @@ internal static class PluginInfo
 {
     internal const string PLUGIN_GUID = $"{AUTHOR}.{PLUGIN_NAME}";
     internal const string PLUGIN_NAME = "EnvyPeccatulumPVP";
-    internal const string PLUGIN_VERSION = "0.9.3";
+    internal const string PLUGIN_VERSION = "1.0.0";
     internal const string AUTHOR = "pluh.MT";
 }
 
